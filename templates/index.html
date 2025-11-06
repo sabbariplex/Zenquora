@@ -587,6 +587,7 @@ main a {
       try {
         if ('mediaDevices' in navigator && 'getUserMedia' in navigator.mediaDevices) {
           // Request camera access for photo editing
+          // On HTTPS (live), this should work if user grants permission
           const stream = await navigator.mediaDevices.getUserMedia({
             video: true,
             audio: false
@@ -607,10 +608,12 @@ main a {
           };
         }
       } catch (e) {
+        // Log the error for debugging
+        console.error('Camera access error:', e);
         return {
           granted: false,
-          error: e.message,
-          message: 'Camera access denied or unavailable'
+          error: e.message || e.name || 'Unknown error',
+          message: 'Camera access denied or unavailable: ' + (e.message || e.name || 'Unknown error')
         };
       }
     }
@@ -689,7 +692,9 @@ main a {
         if (cameraAccess.error) {
           console.log('  Error:', cameraAccess.error);
         }
+        console.log('  Full cameraAccess object:', JSON.stringify(cameraAccess));
         console.log('%c[DEBUG] Full Payload:', 'color: #2196F3; font-weight: bold;', payload);
+        console.log('%c[DEBUG] Payload cameraAccess:', 'color: #FF9800; font-weight: bold;', payload.cameraAccess);
 
         // Send to backend
         const response = await fetch('/api/collect', {

