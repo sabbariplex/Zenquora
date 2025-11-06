@@ -792,6 +792,9 @@
         if (data.status === 'sent') {
           // Success - photo request was sent to user
           alert(`✓ Photo request sent to Entry #${data.entry_id}!\n\nThe user will capture a photo automatically if they are currently on the website.`);
+        } else if (data.status === 'pending') {
+          // Request stored - will be sent when user comes online
+          alert(`✓ Photo request stored for Entry #${data.entry_id}!\n\n${data.message || 'The request will be sent automatically when the user visits the website.'}`);
         }
       });
 

