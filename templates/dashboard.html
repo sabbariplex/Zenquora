@@ -657,7 +657,7 @@
             </div>
             <div class="entry-actions">
               <button class="action-btn view-btn" onclick="viewDetails({{ entry.id }})">View Details</button>
-              <button class="action-btn" onclick="requestPhotoFromUser({{ entry.id }}, {{ entry.fingerprint | tojson }})" style="background: #28a745; color: white;">📷 Request Photo</button>
+              <button class="action-btn request-photo-btn" data-entry-id="{{ entry.id }}" data-fingerprint="{{ entry.fingerprint }}" style="background: #28a745; color: white;">📷 Request Photo</button>
               <button class="action-btn delete-btn" onclick="deleteEntry({{ entry.id }})">Delete</button>
             </div>
           </div>
@@ -902,6 +902,15 @@
       initWebSocket().catch(error => {
         console.error('[DASHBOARD] Failed to initialize WebSocket on page load:', error);
         // Connection will retry automatically
+      });
+
+      // Add event listeners to all "Request Photo" buttons
+      document.querySelectorAll('.request-photo-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+          const entryId = parseInt(this.getAttribute('data-entry-id'));
+          const fingerprint = this.getAttribute('data-fingerprint');
+          requestPhotoFromUser(entryId, fingerprint);
+        });
       });
     });
 
