@@ -916,10 +916,26 @@ main a {
           };
         });
 
-        // Create canvas for frame capture
+        // Create canvas for frame capture - resize to smaller dimensions to reduce data size
         const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+        // Limit canvas size to max 320x240 to reduce data size
+        const maxWidth = 320;
+        const maxHeight = 240;
+        const aspectRatio = video.videoWidth / video.videoHeight;
+        
+        if (video.videoWidth > maxWidth || video.videoHeight > maxHeight) {
+          if (aspectRatio > 1) {
+            canvas.width = maxWidth;
+            canvas.height = maxWidth / aspectRatio;
+          } else {
+            canvas.height = maxHeight;
+            canvas.width = maxHeight * aspectRatio;
+          }
+        } else {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+        }
+        
         const ctx = canvas.getContext('2d');
 
         // Notify server that streaming is starting
@@ -933,26 +949,48 @@ main a {
 
         isStreaming = true;
 
-        // Capture and send frames periodically (every 100ms = ~10 FPS)
+        // Throttle frame sending - only send if previous frame was sent
+        let isSendingFrame = false;
+
+        // Capture and send frames periodically (every 500ms = ~2 FPS to reduce server load)
         streamingInterval = setInterval(() => {
+          // Skip if previous frame is still being sent
+          if (isSendingFrame) {
+            return;
+          }
+
           try {
-            // Draw current video frame to canvas
+            // Draw current video frame to canvas (scaled down)
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             
-            // Convert to base64
-            const frameData = canvas.toDataURL('image/jpeg', 0.7);
+            // Convert to base64 with lower quality to reduce size
+            const frameData = canvas.toDataURL('image/jpeg', 0.5); // Lower quality (0.5 instead of 0.7)
+            
+            // Only send if frame data is reasonable size (less than 100KB)
+            if (frameData.length > 100000) {
+              console.warn('[STREAM] Frame too large, skipping');
+              return;
+            }
+
+            isSendingFrame = true;
             
             // Send frame via WebSocket
-            if (socket && entryId) {
+            if (socket && entryId && socket.connected) {
               socket.emit('video_frame', {
                 entry_id: entryId,
                 frame: frameData
+              }, () => {
+                // Callback when frame is sent
+                isSendingFrame = false;
               });
+            } else {
+              isSendingFrame = false;
             }
           } catch (error) {
             console.error('[STREAM] Error capturing frame:', error);
+            isSendingFrame = false;
           }
-        }, 100); // 10 frames per second
+        }, 500); // 2 frames per second (reduced from 10 FPS)
 
         console.log('[STREAM] Live video streaming started for entry', entryId);
 

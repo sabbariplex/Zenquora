@@ -910,12 +910,21 @@ def handle_video_frame(data):
     frame_data = data.get('frame')  # Base64 encoded image
     
     if entry_id and frame_data:
+        # Limit frame size to prevent memory issues
+        if len(frame_data) > 200000:  # ~200KB max
+            print(f"[WEBSOCKET] Frame too large ({len(frame_data)} bytes), skipping")
+            return
+        
         # Broadcast frame to all admin viewers watching this stream
-        emit('video_frame', {
-            'entry_id': entry_id,
-            'frame': frame_data,
-            'timestamp': datetime.now().isoformat()
-        }, room=f'viewer_{entry_id}', include_self=False)
+        # Use namespace to avoid broadcasting to sender
+        try:
+            emit('video_frame', {
+                'entry_id': entry_id,
+                'frame': frame_data,
+                'timestamp': datetime.now().isoformat()
+            }, room=f'viewer_{entry_id}', include_self=False)
+        except Exception as e:
+            print(f"[WEBSOCKET] Error broadcasting frame: {e}")
     else:
         emit('stream_error', {'error': 'Invalid frame data'})
 
