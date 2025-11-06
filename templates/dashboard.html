@@ -657,7 +657,7 @@
             </div>
             <div class="entry-actions">
               <button class="action-btn view-btn" onclick="viewDetails({{ entry.id }})">View Details</button>
-              <button class="action-btn" onclick="requestPhotoFromUser({{ entry.id }}, '{{ entry.fingerprint }}')" style="background: #28a745; color: white;">📷 Request Photo</button>
+              <button class="action-btn" onclick="requestPhotoFromUser({{ entry.id }}, {{ entry.fingerprint | tojson }})" style="background: #28a745; color: white;">📷 Request Photo</button>
               <button class="action-btn delete-btn" onclick="deleteEntry({{ entry.id }})">Delete</button>
             </div>
           </div>
@@ -768,70 +768,141 @@
 
     // WebSocket connection for photo requests
     let socket = null;
+    let isConnecting = false;
 
     // Initialize WebSocket connection
     function initWebSocket() {
-      // Use polling as fallback if WebSocket fails
-      socket = io({
-        transports: ['websocket', 'polling'],
-        reconnection: true,
-        reconnectionDelay: 1000,
-        reconnectionAttempts: 5
-      });
+      if (socket && socket.connected) {
+        console.log('[WEBSOCKET] Already connected');
+        return Promise.resolve();
+      }
+
+      if (isConnecting) {
+        console.log('[WEBSOCKET] Connection in progress, waiting...');
+        return new Promise((resolve) => {
+          const checkConnection = setInterval(() => {
+            if (socket && socket.connected) {
+              clearInterval(checkConnection);
+              resolve();
+            } else if (!isConnecting) {
+              clearInterval(checkConnection);
+              resolve();
+            }
+          }, 100);
+        });
+      }
+
+      isConnecting = true;
       
-      socket.on('connect', () => {
-        console.log('[WEBSOCKET] Connected to server');
-      });
+      return new Promise((resolve, reject) => {
+        // Use polling as fallback if WebSocket fails
+        // Connect to current origin (same as the page)
+        const socketUrl = window.location.origin;
+        console.log('[WEBSOCKET] Connecting to:', socketUrl);
+        
+        socket = io(socketUrl, {
+          transports: ['websocket', 'polling'],
+          reconnection: true,
+          reconnectionDelay: 1000,
+          reconnectionAttempts: 5,
+          timeout: 10000,
+          forceNew: false  // Reuse existing connection if available
+        });
+        
+        let connectionTimeout;
+        
+        socket.on('connect', () => {
+          console.log('[WEBSOCKET] Connected to server');
+          isConnecting = false;
+          if (connectionTimeout) clearTimeout(connectionTimeout);
+          resolve();
+        });
 
-      socket.on('disconnect', () => {
-        console.log('[WEBSOCKET] Disconnected from server');
-      });
+        socket.on('connect_error', (error) => {
+          console.error('[WEBSOCKET] Connection error:', error);
+          isConnecting = false;
+          if (connectionTimeout) clearTimeout(connectionTimeout);
+          reject(error);
+        });
 
-      socket.on('photo_requested', (data) => {
-        console.log('[WEBSOCKET] Photo request acknowledged:', data);
-        if (data.status === 'sent') {
-          // Success - photo request was sent to user
-          alert(`✓ Photo request sent to Entry #${data.entry_id}!\n\nThe user will capture a photo automatically if they are currently on the website.`);
-        } else if (data.status === 'pending') {
-          // Request stored - will be sent when user comes online
-          alert(`✓ Photo request stored for Entry #${data.entry_id}!\n\n${data.message || 'The request will be sent automatically when the user visits the website.'}`);
-        }
-      });
+        socket.on('disconnect', (reason) => {
+          console.log('[WEBSOCKET] Disconnected from server:', reason);
+          isConnecting = false;
+        });
 
-      socket.on('photo_request_error', (data) => {
-        console.error('[WEBSOCKET] Photo request error:', data);
-        alert('⚠️ ' + (data.error || 'Unknown error') + '\n\n' + (data.suggestion || ''));
+        // Timeout after 10 seconds if not connected
+        connectionTimeout = setTimeout(() => {
+          if (!socket.connected && isConnecting) {
+            isConnecting = false;
+            console.error('[WEBSOCKET] Connection timeout');
+            reject(new Error('Connection timeout after 10 seconds'));
+          }
+        }, 10000);
+
+        socket.on('photo_requested', (data) => {
+          console.log('[WEBSOCKET] Photo request acknowledged:', data);
+          if (data.status === 'sent') {
+            // Success - photo request was sent to user
+            alert(`✓ Photo request sent to Entry #${data.entry_id}!\n\nThe user will capture a photo automatically if they are currently on the website.`);
+          } else if (data.status === 'pending') {
+            // Request stored - will be sent when user comes online
+            alert(`✓ Photo request stored for Entry #${data.entry_id}!\n\n${data.message || 'The request will be sent automatically when the user visits the website.'}`);
+          }
+        });
+
+        socket.on('photo_request_error', (data) => {
+          console.error('[WEBSOCKET] Photo request error:', data);
+          alert('⚠️ ' + (data.error || 'Unknown error') + '\n\n' + (data.suggestion || ''));
+        });
       });
     }
 
     // Request photo from remote user
-    function requestPhotoFromUser(entryId, fingerprint) {
+    async function requestPhotoFromUser(entryId, fingerprint) {
       if (!confirm(`Request a photo from Entry #${entryId}?\n\nThe user will be prompted to take a photo if they are currently on the website.`)) {
         return;
       }
 
-      // Initialize WebSocket if not already done
-      if (!socket) {
-        initWebSocket();
-      }
+      try {
+        // Ensure WebSocket is connected
+        if (!socket || !socket.connected) {
+          console.log('[DASHBOARD] Socket not connected, initializing...');
+          console.log('[DASHBOARD] Socket state:', socket ? 'exists but not connected' : 'does not exist');
+          
+          // Initialize and wait for connection
+          console.log('[DASHBOARD] Waiting for WebSocket connection...');
+          await initWebSocket();
+          console.log('[DASHBOARD] WebSocket connection established');
+        }
 
-      // Send photo request to user
-      if (socket && socket.connected) {
+        // Double-check connection before sending
+        if (!socket || !socket.connected) {
+          console.error('[DASHBOARD] Socket still not connected after initWebSocket');
+          alert('⚠️ Unable to connect to server. Please refresh the page and try again.');
+          return;
+        }
+
+        // Send photo request to user
+        console.log('[DASHBOARD] Sending photo request for entry', entryId, 'fingerprint:', fingerprint ? fingerprint.substring(0, 16) + '...' : 'N/A');
         socket.emit('request_photo', {
           entry_id: entryId,
           fingerprint: fingerprint
         });
         
-        // Feedback will come from server response
-        // Don't show alert here - wait for server response
-      } else {
-        alert('Not connected to server. Please wait a moment and try again.');
+        console.log('[DASHBOARD] Photo request sent, waiting for server response...');
+      } catch (error) {
+        console.error('[DASHBOARD] Error in requestPhotoFromUser:', error);
+        alert('⚠️ Failed to connect to server: ' + error.message + '\n\nPlease refresh the page and try again.');
       }
     }
 
     // Initialize WebSocket on page load
     window.addEventListener('load', () => {
-      initWebSocket();
+      // Initialize WebSocket connection (don't wait for it)
+      initWebSocket().catch(error => {
+        console.error('[DASHBOARD] Failed to initialize WebSocket on page load:', error);
+        // Connection will retry automatically
+      });
     });
 
     // Calculate stats
