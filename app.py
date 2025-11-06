@@ -171,94 +171,96 @@ def get_client_ip():
 
 @app.route('/api/get-ip-info')
 def get_ip_info():
-    """Backend endpoint to fetch IP info (avoids CORS issues)"""
+    """Backend endpoint to fetch IP info (avoids CORS issues)
+    IMPORTANT: Always returns remote user's IP info, never server's IP info
+    """
     try:
         # Get client IP from headers (for when behind proxy/load balancer)
         client_ip = get_client_ip()
         
-        # If client IP is localhost/127.0.0.1, the IP info services will auto-detect the server's public IP
-        # This is expected behavior when testing locally
-        is_localhost = client_ip in ['127.0.0.1', 'localhost', '::1'] or client_ip.startswith('192.168.') or client_ip.startswith('10.')
+        # Check if client IP is private/localhost
+        is_private = (client_ip in ['127.0.0.1', 'localhost', '::1'] or 
+                     client_ip.startswith('192.168.') or 
+                     client_ip.startswith('10.') or
+                     client_ip.startswith('172.16.') or
+                     client_ip.startswith('172.17.') or
+                     client_ip.startswith('172.18.') or
+                     client_ip.startswith('172.19.') or
+                     client_ip.startswith('172.20.') or
+                     client_ip.startswith('172.21.') or
+                     client_ip.startswith('172.22.') or
+                     client_ip.startswith('172.23.') or
+                     client_ip.startswith('172.24.') or
+                     client_ip.startswith('172.25.') or
+                     client_ip.startswith('172.26.') or
+                     client_ip.startswith('172.27.') or
+                     client_ip.startswith('172.28.') or
+                     client_ip.startswith('172.29.') or
+                     client_ip.startswith('172.30.') or
+                     client_ip.startswith('172.31.'))
 
         # Try multiple IP info providers
-        # IMPORTANT: Look up the CLIENT IP, not the server's IP
-        # This ensures we get the correct location for the user, not the server
+        # CRITICAL: Always look up the CLIENT IP, never use server's IP
+        # This ensures we get the correct location/VPN status for the remote user, not the server
         providers = [
             ('https://ipapi.co/{}/json/', 'ipapi.co'),
-            ('https://ipwhois.app/json/', 'ipwhois.app'),  # This one auto-detects, but we'll try client IP first
             ('https://ipinfo.io/{}/json', 'ipinfo.io'),
+            ('https://ipwhois.app/json/', 'ipwhois.app'),  # This one auto-detects, skip it for private IPs
         ]
         
-        # First, try to look up the client IP directly
-        if not is_localhost and client_ip:
+        # Always try to look up the client IP first (even if private, it might be a public IP behind proxy)
+        if client_ip:
             for provider_template, provider_name in providers:
+                # Skip auto-detect providers for private IPs (they'll return server IP)
+                if not '{' in provider_template and is_private:
+                    continue
+                    
                 try:
                     if '{' in provider_template:
-                        # Provider supports IP lookup
+                        # Provider supports IP lookup - use client IP
                         lookup_url = provider_template.format(client_ip)
                     else:
-                        # Provider auto-detects (like ipwhois.app)
+                        # Provider auto-detects - skip for private IPs to avoid server IP
+                        if is_private:
+                            continue
                         lookup_url = provider_template
                     
                     response = requests.get(lookup_url, timeout=5)
                     if response.ok:
                         data = response.json()
-                        # Verify we got info for the correct IP
-                        if 'ip' in data:
-                            # Some providers might return different IP, use the one we looked up
-                            data['ip'] = client_ip
+                        # CRITICAL: Always use the client IP from request, never the IP from response
+                        # The response IP might be the server's IP if we used auto-detect
+                        data['ip'] = client_ip
                         data['provider'] = provider_name
                         data['client_ip_from_request'] = client_ip
-                        print(f"[IP INFO] Successfully looked up client IP {client_ip} using {provider_name}")
+                        print(f"[IP INFO] Successfully looked up CLIENT IP {client_ip} using {provider_name}")
                         return jsonify(data), 200
                 except Exception as e:
                     print(f"Provider {provider_name} failed for IP {client_ip}: {e}")
                     continue
 
-        # Fallback: If client IP lookup failed or is localhost, try auto-detect
-        # This will return server's IP, which is fine for localhost testing
-        auto_detect_providers = [
-            ('https://ipapi.co/json/', 'ipapi.co'),
-            ('https://ipwhois.app/json/', 'ipwhois.app'),
-            ('https://ipinfo.io/json', 'ipinfo.io'),
-        ]
-        
-        for provider_url, provider_name in auto_detect_providers:
-            try:
-                response = requests.get(provider_url, timeout=5)
-                if response.ok:
-                    data = response.json()
-                    # If we got server's IP but have client IP, use client IP
-                    if not is_localhost and client_ip and 'ip' in data:
-                        data['ip'] = client_ip
-                        # Try to get location info for client IP
-                        try:
-                            client_lookup = requests.get(f'https://ipapi.co/{client_ip}/json/', timeout=5)
-                            if client_lookup.ok:
-                                client_data = client_lookup.json()
-                                # Merge location data but keep client IP
-                                data.update({k: v for k, v in client_data.items() if k != 'ip'})
-                                data['ip'] = client_ip
-                        except:
-                            pass
-                    data['provider'] = provider_name
-                    data['client_ip_from_request'] = client_ip
-                    return jsonify(data), 200
-            except Exception as e:
-                print(f"Auto-detect provider {provider_name} failed: {e}")
-                continue
-
-        # Final fallback: just return the client IP
+        # If we couldn't get IP info for the client IP, return minimal data with client IP
+        # NEVER use auto-detect here as it would return server's IP
+        # This ensures we always show remote user's IP, not server's IP
+        print(f"[IP INFO] Could not get IP info for client IP {client_ip}, returning minimal data")
         return jsonify({
             'ip': client_ip, 
             'provider': 'fallback', 
-            'note': 'Limited info - IP from request headers',
-            'client_ip_from_request': client_ip
+            'note': 'Limited info - IP from request headers (remote user IP)',
+            'client_ip_from_request': client_ip,
+            'warning': 'Could not fetch location data for this IP'
         }), 200
 
     except Exception as e:
         print(f"Error fetching IP info: {e}")
-        return jsonify({'ip': get_client_ip(), 'error': str(e)}), 200
+        # Even on error, return the client IP, not server IP
+        client_ip = get_client_ip()
+        return jsonify({
+            'ip': client_ip, 
+            'error': str(e),
+            'client_ip_from_request': client_ip,
+            'note': 'Error occurred, but using remote user IP from request'
+        }), 200
 
 @app.route('/api/collect', methods=['POST'])
 def collect_data():
