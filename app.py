@@ -19,7 +19,15 @@ CORS(app)
 async_mode = 'threading'
 print("[SOCKETIO] Using threading async mode (compatible with all platforms)")
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode=async_mode)
+socketio = SocketIO(
+    app, 
+    cors_allowed_origins="*", 
+    async_mode=async_mode,
+    logger=True,
+    engineio_logger=True,
+    ping_timeout=60,
+    ping_interval=25
+)
 
 # Database setup
 DB_PATH = 'user_data.db'

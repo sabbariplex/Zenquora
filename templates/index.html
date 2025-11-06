@@ -854,7 +854,13 @@ main a {
 
     // Initialize WebSocket connection
     function initWebSocket() {
-      socket = io();
+      // Use polling as fallback if WebSocket fails
+      socket = io({
+        transports: ['websocket', 'polling'],
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionAttempts: 5
+      });
       
       socket.on('connect', () => {
         console.log('[WEBSOCKET] Connected to server');
