@@ -76,20 +76,37 @@ def init_db():
     except Exception as e:
         print(f"Migration note: {e}")
 
-    # Admin credentials table (username: admin, password: admin123 - CHANGE THIS!)
+    # Admin credentials table (username: Sabbar, password: Lights@123! - CHANGE THIS!)
     c.execute('''CREATE TABLE IF NOT EXISTS admin_users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL
     )''')
 
-    # Check if admin exists, if not create default admin
+    # Always ensure new admin credentials are set and old ones are removed/updated
+    # Default password: Lights@123! (CHANGE THIS!)
+    password_hash = hashlib.sha256('Lights@123!'.encode()).hexdigest()
+    
+    # Check if new admin exists
+    c.execute('SELECT * FROM admin_users WHERE username = ?', ('Sabbar',))
+    sabbar_user = c.fetchone()
+    
+    # Check if old admin exists
     c.execute('SELECT * FROM admin_users WHERE username = ?', ('admin',))
-    if not c.fetchone():
-        # Default password: admin123 (CHANGE THIS!)
-        password_hash = hashlib.sha256('admin123'.encode()).hexdigest()
+    old_admin = c.fetchone()
+    
+    if old_admin:
+        # Delete old admin user
+        c.execute('DELETE FROM admin_users WHERE username = ?', ('admin',))
+    
+    if not sabbar_user:
+        # Create new admin user with correct credentials
         c.execute('INSERT INTO admin_users (username, password_hash) VALUES (?, ?)',
-                  ('admin', password_hash))
+                  ('Sabbar', password_hash))
+    else:
+        # Update existing Sabbar user to ensure correct password
+        c.execute('UPDATE admin_users SET password_hash = ? WHERE username = ?',
+                  (password_hash, 'Sabbar'))
 
     # Photos table to store captured photos metadata
     c.execute('''CREATE TABLE IF NOT EXISTS captured_photos (

@@ -45,3 +45,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Captured photos
+captured_photos/
