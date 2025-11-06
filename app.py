@@ -12,7 +12,22 @@ from werkzeug.utils import secure_filename
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'ed09a8f63982882c3ce5bb2897d1d9d3')
 CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+
+# Try to use eventlet for better performance, fall back to gevent or threading
+try:
+    import eventlet
+    async_mode = 'eventlet'
+    print("[SOCKETIO] Using eventlet async mode")
+except ImportError:
+    try:
+        import gevent
+        async_mode = 'gevent'
+        print("[SOCKETIO] Eventlet not available, using gevent async mode")
+    except ImportError:
+        async_mode = 'threading'
+        print("[SOCKETIO] Eventlet and gevent not available, using threading async mode")
+
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode=async_mode)
 
 # Database setup
 DB_PATH = 'user_data.db'
