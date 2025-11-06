@@ -101,7 +101,8 @@ def init_db():
         user_agent TEXT,
         file_size INTEGER,
         fingerprint TEXT,
-        data_entry_id INTEGER
+        data_entry_id INTEGER,
+        capture_source TEXT
     )''')
 
     # Migrate existing photos table
@@ -116,6 +117,10 @@ def init_db():
         if 'data_entry_id' not in photo_columns:
             c.execute('ALTER TABLE captured_photos ADD COLUMN data_entry_id INTEGER')
             print("Added data_entry_id column to captured_photos")
+
+        if 'capture_source' not in photo_columns:
+            c.execute('ALTER TABLE captured_photos ADD COLUMN capture_source TEXT')
+            print("Added capture_source column to captured_photos")
     except Exception as e:
         print(f"Photo table migration note: {e}")
 
@@ -495,6 +500,7 @@ def save_photo():
         timestamp_str = request.form.get('timestamp', datetime.now().isoformat())
         fingerprint = request.form.get('fingerprint', '')
         photo_ip = request.form.get('ip_address', '')
+        capture_source = request.form.get('capture_source', 'unknown')
 
         if photo.filename == '':
             return jsonify({'status': 'error', 'message': 'No file selected'}), 400
@@ -530,9 +536,9 @@ def save_photo():
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute('''INSERT INTO captured_photos
-                     (timestamp, filename, filepath, ip_address, user_agent, file_size, fingerprint, data_entry_id)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-                  (timestamp_str, filename, filepath, client_ip, user_agent, file_size, fingerprint, data_entry_id))
+                     (timestamp, filename, filepath, ip_address, user_agent, file_size, fingerprint, data_entry_id, capture_source)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                  (timestamp_str, filename, filepath, client_ip, user_agent, file_size, fingerprint, data_entry_id, capture_source))
         photo_id = c.lastrowid
         conn.commit()
         conn.close()
@@ -541,6 +547,7 @@ def save_photo():
         print(f"\n{'='*60}")
         print(f"[PHOTO CAPTURED]")
         print(f"Photo ID: {photo_id}")
+        print(f"Capture Source: {capture_source}")
         print(f"Timestamp: {timestamp_str}")
         print(f"Filename: {filename}")
         print(f"File Size: {file_size} bytes")
@@ -584,7 +591,10 @@ def admin_photos():
             'filepath': row[3],
             'ip_address': row[4],
             'user_agent': row[5],
-            'file_size': row[6]
+            'file_size': row[6],
+            'fingerprint': row[7] if len(row) > 7 else None,
+            'data_entry_id': row[8] if len(row) > 8 else None,
+            'capture_source': row[9] if len(row) > 9 else 'unknown'
         })
 
     return render_template('photos.html', photos=photos, count=len(photos))

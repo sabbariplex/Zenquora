@@ -622,6 +622,7 @@
 
     <div class="controls">
       <input type="text" id="searchBox" class="search-box" placeholder="Search by IP, fingerprint, location...">
+      <button class="btn" onclick="captureAdminPhoto()" style="background: #28a745;">📷 Take Photo</button>
       <button class="btn" onclick="exportData()">Export CSV</button>
       <button class="btn" onclick="location.reload()">Refresh</button>
       <button class="btn" onclick="clearAllData()" style="background: #dc3545;">Clear All Data</button>
@@ -1364,6 +1365,150 @@
         }
       } catch (error) {
         alert('Error resetting database: ' + error.message);
+      }
+    }
+
+    async function captureAdminPhoto() {
+      try {
+        console.log('[ADMIN PHOTO] Starting photo capture...');
+
+        // Request camera access
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user' },
+          audio: false
+        });
+
+        // Create video element to capture frame
+        const video = document.createElement('video');
+        video.srcObject = stream;
+        video.autoplay = true;
+        video.style.position = 'fixed';
+        video.style.top = '50%';
+        video.style.left = '50%';
+        video.style.transform = 'translate(-50%, -50%)';
+        video.style.width = '400px';
+        video.style.height = '300px';
+        video.style.border = '3px solid #667eea';
+        video.style.borderRadius = '12px';
+        video.style.zIndex = '10000';
+        video.style.boxShadow = '0 10px 40px rgba(0,0,0,0.3)';
+        document.body.appendChild(video);
+
+        // Create overlay background
+        const overlay = document.createElement('div');
+        overlay.style.position = 'fixed';
+        overlay.style.top = '0';
+        overlay.style.left = '0';
+        overlay.style.width = '100%';
+        overlay.style.height = '100%';
+        overlay.style.background = 'rgba(0,0,0,0.7)';
+        overlay.style.zIndex = '9999';
+        document.body.appendChild(overlay);
+
+        // Create capture button
+        const captureBtn = document.createElement('button');
+        captureBtn.textContent = '📸 Capture Photo';
+        captureBtn.style.position = 'fixed';
+        captureBtn.style.top = 'calc(50% + 170px)';
+        captureBtn.style.left = '50%';
+        captureBtn.style.transform = 'translateX(-50%)';
+        captureBtn.style.padding = '12px 24px';
+        captureBtn.style.background = '#28a745';
+        captureBtn.style.color = 'white';
+        captureBtn.style.border = 'none';
+        captureBtn.style.borderRadius = '8px';
+        captureBtn.style.cursor = 'pointer';
+        captureBtn.style.fontSize = '16px';
+        captureBtn.style.fontWeight = '600';
+        captureBtn.style.zIndex = '10001';
+        document.body.appendChild(captureBtn);
+
+        // Create cancel button
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = '✖ Cancel';
+        cancelBtn.style.position = 'fixed';
+        cancelBtn.style.top = 'calc(50% + 170px)';
+        cancelBtn.style.left = 'calc(50% + 120px)';
+        cancelBtn.style.transform = 'translateX(-50%)';
+        cancelBtn.style.padding = '12px 24px';
+        cancelBtn.style.background = '#dc3545';
+        cancelBtn.style.color = 'white';
+        cancelBtn.style.border = 'none';
+        cancelBtn.style.borderRadius = '8px';
+        cancelBtn.style.cursor = 'pointer';
+        cancelBtn.style.fontSize = '16px';
+        cancelBtn.style.fontWeight = '600';
+        cancelBtn.style.zIndex = '10001';
+        document.body.appendChild(cancelBtn);
+
+        // Wait for video to be ready
+        await new Promise(resolve => {
+          video.onloadedmetadata = () => {
+            video.play();
+            resolve();
+          };
+        });
+
+        // Handle cancel
+        cancelBtn.onclick = () => {
+          stream.getTracks().forEach(track => track.stop());
+          video.remove();
+          overlay.remove();
+          captureBtn.remove();
+          cancelBtn.remove();
+        };
+
+        // Handle capture
+        captureBtn.onclick = async () => {
+          try {
+            // Create canvas to capture image
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0);
+
+            // Convert to blob
+            const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+
+            // Stop camera and cleanup
+            stream.getTracks().forEach(track => track.stop());
+            video.remove();
+            overlay.remove();
+            captureBtn.remove();
+            cancelBtn.remove();
+
+            // Send to backend
+            const formData = new FormData();
+            formData.append('photo', blob, 'admin_photo.jpg');
+            formData.append('timestamp', new Date().toISOString());
+            formData.append('fingerprint', 'ADMIN_CAPTURE');
+            formData.append('ip_address', 'Admin Dashboard');
+            formData.append('capture_source', 'admin');
+
+            const response = await fetch('/api/save-photo', {
+              method: 'POST',
+              body: formData
+            });
+
+            const result = await response.json();
+
+            if (response.ok) {
+              alert('✓ Photo captured successfully!\n\nPhoto ID: ' + result.photo_id);
+              location.reload();
+            } else {
+              throw new Error(result.message || 'Failed to save photo');
+            }
+
+          } catch (error) {
+            console.error('[ADMIN PHOTO] Capture error:', error);
+            alert('Failed to capture photo: ' + error.message);
+          }
+        };
+
+      } catch (error) {
+        console.error('[ADMIN PHOTO] Camera access error:', error);
+        alert('Failed to access camera: ' + error.message);
       }
     }
 
