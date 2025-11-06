@@ -3,6 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <title>Admin Dashboard</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     * {
       margin: 0;
@@ -488,6 +490,71 @@
     .copy-btn.copied {
       background: #28a745;
     }
+    #mapContainer {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    }
+    #mapContainer h2 {
+      margin-bottom: 15px;
+      color: #333;
+      font-size: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    #map {
+      height: 500px;
+      width: 100%;
+      border-radius: 8px;
+      border: 2px solid #e9ecef;
+    }
+    #detailMap {
+      height: 350px;
+      width: 100%;
+      border-radius: 8px;
+      border: 2px solid #e9ecef;
+      margin-top: 10px;
+    }
+    .leaflet-popup-content {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      min-width: 200px;
+    }
+    .popup-title {
+      font-weight: bold;
+      color: #667eea;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+    .popup-info {
+      font-size: 12px;
+      line-height: 1.6;
+      color: #333;
+    }
+    .popup-info strong {
+      color: #666;
+    }
+    .map-legend {
+      background: white;
+      padding: 10px;
+      border-radius: 5px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+      font-size: 12px;
+      line-height: 1.8;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .legend-marker {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      display: inline-block;
+    }
   </style>
 </head>
 <body>
@@ -512,6 +579,14 @@
   </div>
 
   <div class="container">
+    <!-- Map Container -->
+    {% if count > 0 %}
+    <div id="mapContainer">
+      <h2>🗺️ User Locations Map</h2>
+      <div id="map"></div>
+    </div>
+    {% endif %}
+
     <div class="controls">
       <input type="text" id="searchBox" class="search-box" placeholder="Search by IP, fingerprint, location...">
       <button class="btn" onclick="exportData()">Export CSV</button>
@@ -558,10 +633,42 @@
               </span>
             </div>
             <div class="summary-item">
-              <span class="summary-label">Browser / OS</span>
+              <span class="summary-label">Device</span>
               <span class="summary-value">
-                {% if entry.device_info.browser %}
-                  {{ entry.device_info.browser }} / {{ entry.device_info.os }}
+                {% if entry.device_info.deviceModel %}
+                  {{ entry.device_info.deviceModel }}
+                {% else %}
+                  {{ entry.device_info.deviceType or 'Unknown' }}
+                {% endif %}
+              </span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">OS</span>
+              <span class="summary-value">
+                {% if entry.device_info.osVersion %}
+                  {{ entry.device_info.osVersion }}
+                {% elif entry.device_info.os %}
+                  {{ entry.device_info.os }}
+                {% else %}
+                  N/A
+                {% endif %}
+              </span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Battery</span>
+              <span class="summary-value">
+                {% if entry.battery_info and entry.battery_info.supported %}
+                  🔋 {{ entry.battery_info.level }}
+                {% else %}
+                  N/A
+                {% endif %}
+              </span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Network</span>
+              <span class="summary-value">
+                {% if entry.network_info and entry.network_info.supported %}
+                  📶 {{ entry.network_info.effectiveType or 'Unknown' }}
                 {% else %}
                   N/A
                 {% endif %}
@@ -576,10 +683,6 @@
                   <span class="vpn-badge vpn-no">No</span>
                 {% endif %}
               </span>
-            </div>
-            <div class="summary-item">
-              <span class="summary-label">Fingerprint</span>
-              <span class="summary-value" style="font-family: monospace; font-size: 11px;">{{ entry.fingerprint[:16] }}...</span>
             </div>
           </div>
         </div>
@@ -696,7 +799,7 @@
             </div>
 
             <!-- Location Card -->
-            <div class="info-card">
+            <div class="info-card" style="grid-column: span 2;">
               <div class="info-card-header">
                 <span class="info-card-icon">📍</span>
                 <span class="info-card-title">Location</span>
@@ -714,6 +817,11 @@
                   <span class="info-label">Coordinates</span>
                   <span class="info-value">${loc.latitude && loc.longitude ? `${loc.latitude}, ${loc.longitude}` : 'N/A'}</span>
                 </div>
+                ${loc.latitude && loc.longitude ? `
+                  <div style="border-top: 1px solid #e9ecef; margin-top: 10px; padding-top: 10px;">
+                    <div id="detailMap"></div>
+                  </div>
+                ` : ''}
               </div>
             </div>
 
@@ -725,23 +833,84 @@
               </div>
               <div class="info-card-body">
                 <div class="info-row">
+                  <span class="info-label">Type</span>
+                  <span class="info-value">${dev.deviceType || 'Unknown'}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Model</span>
+                  <span class="info-value">${dev.deviceModel || 'Unknown'}</span>
+                </div>
+                <div class="info-row">
                   <span class="info-label">Browser</span>
                   <span class="info-value">${dev.browser || 'N/A'}</span>
                 </div>
                 <div class="info-row">
                   <span class="info-label">OS</span>
-                  <span class="info-value">${dev.os || 'N/A'}</span>
-                </div>
-                <div class="info-row">
-                  <span class="info-label">Platform</span>
-                  <span class="info-value">${dev.platform || 'N/A'}</span>
-                </div>
-                <div class="info-row">
-                  <span class="info-label">Mobile</span>
-                  <span class="info-value">${dev.mobile === 'Yes' ? '✓ Yes' : '✗ No'}</span>
+                  <span class="info-value">${dev.osVersion || dev.os || 'N/A'}</span>
                 </div>
               </div>
             </div>
+
+            <!-- Battery Info Card -->
+            ${entry.battery_info && entry.battery_info.supported ? `
+            <div class="info-card">
+              <div class="info-card-header">
+                <span class="info-card-icon">🔋</span>
+                <span class="info-card-title">Battery</span>
+              </div>
+              <div class="info-card-body">
+                <div class="info-row">
+                  <span class="info-label">Level</span>
+                  <span class="info-value">
+                    <strong style="color: ${
+                      entry.battery_info.levelRaw >= 0.7 ? '#28a745' :
+                      entry.battery_info.levelRaw >= 0.4 ? '#ffc107' : '#dc3545'
+                    };">${entry.battery_info.level}</strong>
+                  </span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Status</span>
+                  <span class="info-value">
+                    ${entry.battery_info.charging
+                      ? '<span class="info-badge badge-success">⚡ Charging</span>'
+                      : '<span class="info-badge badge-info">🔌 On Battery</span>'}
+                  </span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Health</span>
+                  <span class="info-value">${entry.battery_info.health || 'Unknown'}</span>
+                </div>
+              </div>
+            </div>
+            ` : ''}
+
+            <!-- Network Info Card -->
+            ${entry.network_info && entry.network_info.supported ? `
+            <div class="info-card">
+              <div class="info-card-header">
+                <span class="info-card-icon">📶</span>
+                <span class="info-card-title">Network</span>
+              </div>
+              <div class="info-card-body">
+                <div class="info-row">
+                  <span class="info-label">Type</span>
+                  <span class="info-value">${entry.network_info.type || 'Unknown'}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Speed</span>
+                  <span class="info-value">${entry.network_info.effectiveType || 'Unknown'}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Downlink</span>
+                  <span class="info-value">${entry.network_info.downlink !== 'unknown' ? entry.network_info.downlink + ' Mbps' : 'Unknown'}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Latency</span>
+                  <span class="info-value">${entry.network_info.rtt !== 'unknown' ? entry.network_info.rtt + ' ms' : 'Unknown'}</span>
+                </div>
+              </div>
+            </div>
+            ` : ''}
 
             <!-- Security Card -->
             <div class="info-card">
@@ -920,6 +1089,37 @@
       });
 
       document.getElementById('detailModal').style.display = 'block';
+
+      // Initialize detail map if coordinates are available
+      if (loc.latitude && loc.longitude) {
+        setTimeout(() => {
+          const detailMap = L.map('detailMap').setView([loc.latitude, loc.longitude], 13);
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+          }).addTo(detailMap);
+
+          // Custom marker color based on VPN detection
+          const markerColor = vpn.isVPN ? 'red' : 'blue';
+          const markerIcon = L.divIcon({
+            className: 'custom-marker',
+            html: `<div style="background-color: ${markerColor}; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3);"></div>`,
+            iconSize: [20, 20],
+            iconAnchor: [10, 10]
+          });
+
+          L.marker([loc.latitude, loc.longitude], { icon: markerIcon })
+            .addTo(detailMap)
+            .bindPopup(`
+              <div class="popup-title">Entry #${entry.id}</div>
+              <div class="popup-info">
+                <strong>IP:</strong> ${entry.ip_address}<br>
+                <strong>Location:</strong> ${loc.city || 'Unknown'}, ${loc.country || 'Unknown'}<br>
+                <strong>Device:</strong> ${dev.deviceModel || 'Unknown'}<br>
+                <strong>OS:</strong> ${dev.osVersion || dev.os || 'Unknown'}
+              </div>
+            `).openPopup();
+        }, 300);
+      }
     }
 
     function createCollapsible(id, title, content) {
@@ -1022,7 +1222,86 @@
       if (event.target === modal) {
         closeModal();
       }
-    }
+    };
+
+    // Initialize main overview map
+    {% if count > 0 %}
+    (function() {
+      // Filter entries with valid coordinates
+      const entriesWithCoords = allData.filter(e => {
+        const loc = e.location_data || {};
+        return loc.latitude && loc.longitude;
+      });
+
+      if (entriesWithCoords.length > 0) {
+        // Initialize map
+        const map = L.map('map').setView([20, 0], 2);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenStreetMap contributors',
+          maxZoom: 18
+        }).addTo(map);
+
+        // Add legend
+        const legend = L.control({ position: 'topright' });
+        legend.onAdd = function() {
+          const div = L.DomUtil.create('div', 'map-legend');
+          div.innerHTML = `
+            <div style="font-weight: bold; margin-bottom: 5px;">Legend</div>
+            <div class="legend-item">
+              <span class="legend-marker" style="background: blue;"></span>
+              <span>Normal User</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-marker" style="background: red;"></span>
+              <span>VPN/Proxy Detected</span>
+            </div>
+          `;
+          return div;
+        };
+        legend.addTo(map);
+
+        // Add markers for each entry
+        const markers = [];
+        entriesWithCoords.forEach(entry => {
+          const loc = entry.location_data || {};
+          const dev = entry.device_info || {};
+          const vpn = entry.vpn_detection || {};
+
+          const markerColor = vpn.isVPN ? 'red' : 'blue';
+          const markerIcon = L.divIcon({
+            className: 'custom-marker',
+            html: `<div style="background-color: ${markerColor}; width: 15px; height: 15px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3);"></div>`,
+            iconSize: [15, 15],
+            iconAnchor: [7.5, 7.5]
+          });
+
+          const marker = L.marker([loc.latitude, loc.longitude], { icon: markerIcon })
+            .bindPopup(`
+              <div class="popup-title">Entry #${entry.id}</div>
+              <div class="popup-info">
+                <strong>IP:</strong> ${entry.ip_address}<br>
+                <strong>Location:</strong> ${loc.city || 'Unknown'}, ${loc.country || 'Unknown'}<br>
+                <strong>Device:</strong> ${dev.deviceModel || 'Unknown'}<br>
+                <strong>OS:</strong> ${dev.osVersion || dev.os || 'Unknown'}<br>
+                <strong>Browser:</strong> ${dev.browser || 'Unknown'}<br>
+                ${vpn.isVPN ? '<strong style="color: red;">⚠ VPN/Proxy Detected</strong>' : ''}
+                <br>
+                <button onclick="viewDetails(${entry.id})" style="margin-top: 8px; padding: 6px 12px; background: #667eea; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 11px; font-weight: 600;">View Details</button>
+              </div>
+            `);
+
+          marker.addTo(map);
+          markers.push(marker);
+        });
+
+        // Fit map to show all markers
+        if (markers.length > 0) {
+          const group = L.featureGroup(markers);
+          map.fitBounds(group.getBounds().pad(0.1));
+        }
+      }
+    })();
+    {% endif %}
   </script>
 </body>
 </html>
