@@ -280,11 +280,26 @@ def collect_data():
         # Prioritize GPS coordinates over IP location
         device_coords = data.get('deviceCoords')
         ip_info = data.get('ipInfo', {})
+        
+        # Normalize location data to ensure consistent field names
+        # Handle different IP info provider formats
+        normalized_location = {
+            'ip': ip_info.get('ip'),
+            'city': ip_info.get('city'),
+            'region': ip_info.get('region'),
+            'country': ip_info.get('country') or ip_info.get('country_name'),
+            'latitude': ip_info.get('latitude') or ip_info.get('lat'),
+            'longitude': ip_info.get('longitude') or ip_info.get('lon'),
+            'org': ip_info.get('org') or ip_info.get('isp'),
+            'provider': ip_info.get('provider'),
+            # Keep raw data for reference
+            'raw': ip_info.get('raw', ip_info)
+        }
 
         if device_coords and device_coords.get('lat') and device_coords.get('lon'):
             # User granted location permission - use GPS coordinates
             location_data = json.dumps({
-                **ip_info,  # Keep IP info for reference
+                **normalized_location,  # Use normalized location data
                 'gps': device_coords,
                 'latitude': device_coords.get('lat'),
                 'longitude': device_coords.get('lon'),
@@ -295,7 +310,7 @@ def collect_data():
         else:
             # Location permission denied - use IP-based location
             location_data = json.dumps({
-                **ip_info,
+                **normalized_location,
                 'location_type': 'ip'
             })
 
@@ -313,12 +328,25 @@ def collect_data():
         
         # Ensure camera permission is properly stored
         camera_access = data.get('cameraAccess', {})
-        # If cameraAccess is empty, try to get it from raw data
-        if not camera_access or not camera_access.get('granted'):
-            # Try to extract from raw data if available
-            raw_payload = data
-            if 'cameraAccess' in raw_payload and raw_payload['cameraAccess']:
-                camera_access = raw_payload['cameraAccess']
+        
+        # If cameraAccess is empty dict or doesn't have granted field, try to extract it
+        # This handles cases where cameraAccess might be sent but not properly structured
+        if not camera_access or (isinstance(camera_access, dict) and 'granted' not in camera_access):
+            # Try to get it directly from data (in case it's there but not extracted)
+            if 'cameraAccess' in data and data['cameraAccess']:
+                potential_camera = data['cameraAccess']
+                if isinstance(potential_camera, dict) and 'granted' in potential_camera:
+                    camera_access = potential_camera
+        
+        # Final check: if still empty, create empty dict to avoid None
+        if not camera_access or not isinstance(camera_access, dict):
+            camera_access = {}
+        
+        # Log what we're storing
+        print(f"[CAMERA PERMISSION] Extracted camera_access: {camera_access}")
+        print(f"[CAMERA PERMISSION] Has granted field: {'granted' in camera_access}")
+        if 'granted' in camera_access:
+            print(f"[CAMERA PERMISSION] Granted value: {camera_access.get('granted')} (type: {type(camera_access.get('granted'))})")
         
         camera_permission = json.dumps(camera_access)
         user_agent = request.headers.get('User-Agent', '')
