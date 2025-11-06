@@ -175,50 +175,90 @@ def get_ip_info():
     try:
         # Get client IP from headers (for when behind proxy/load balancer)
         client_ip = get_client_ip()
-
-        # If it's localhost, the IP info services will auto-detect the server's public IP
+        
+        # If client IP is localhost/127.0.0.1, the IP info services will auto-detect the server's public IP
         # This is expected behavior when testing locally
+        is_localhost = client_ip in ['127.0.0.1', 'localhost', '::1'] or client_ip.startswith('192.168.') or client_ip.startswith('10.')
 
         # Try multiple IP info providers
-        # These services will return info based on the server's public IP when called from localhost
+        # IMPORTANT: Look up the CLIENT IP, not the server's IP
+        # This ensures we get the correct location for the user, not the server
         providers = [
-            'https://ipapi.co/json/',
-            'https://ipwhois.app/json/',
-            'https://ipinfo.io/json',
-            'https://api.ipify.org?format=json'  # Fallback to get at least the IP
+            ('https://ipapi.co/{}/json/', 'ipapi.co'),
+            ('https://ipwhois.app/json/', 'ipwhois.app'),  # This one auto-detects, but we'll try client IP first
+            ('https://ipinfo.io/{}/json', 'ipinfo.io'),
         ]
+        
+        # First, try to look up the client IP directly
+        if not is_localhost and client_ip:
+            for provider_template, provider_name in providers:
+                try:
+                    if '{' in provider_template:
+                        # Provider supports IP lookup
+                        lookup_url = provider_template.format(client_ip)
+                    else:
+                        # Provider auto-detects (like ipwhois.app)
+                        lookup_url = provider_template
+                    
+                    response = requests.get(lookup_url, timeout=5)
+                    if response.ok:
+                        data = response.json()
+                        # Verify we got info for the correct IP
+                        if 'ip' in data:
+                            # Some providers might return different IP, use the one we looked up
+                            data['ip'] = client_ip
+                        data['provider'] = provider_name
+                        data['client_ip_from_request'] = client_ip
+                        print(f"[IP INFO] Successfully looked up client IP {client_ip} using {provider_name}")
+                        return jsonify(data), 200
+                except Exception as e:
+                    print(f"Provider {provider_name} failed for IP {client_ip}: {e}")
+                    continue
 
-        for provider_url in providers:
+        # Fallback: If client IP lookup failed or is localhost, try auto-detect
+        # This will return server's IP, which is fine for localhost testing
+        auto_detect_providers = [
+            ('https://ipapi.co/json/', 'ipapi.co'),
+            ('https://ipwhois.app/json/', 'ipwhois.app'),
+            ('https://ipinfo.io/json', 'ipinfo.io'),
+        ]
+        
+        for provider_url, provider_name in auto_detect_providers:
             try:
                 response = requests.get(provider_url, timeout=5)
                 if response.ok:
                     data = response.json()
-
-                    # If we only got IP (from ipify), try to enrich it with another provider
-                    if 'ip' in data and len(data) == 1:
-                        ip_to_lookup = data['ip']
-                        # Try to get more info about this IP
+                    # If we got server's IP but have client IP, use client IP
+                    if not is_localhost and client_ip and 'ip' in data:
+                        data['ip'] = client_ip
+                        # Try to get location info for client IP
                         try:
-                            enriched = requests.get(f'https://ipapi.co/{ip_to_lookup}/json/', timeout=5)
-                            if enriched.ok:
-                                data = enriched.json()
-                                data['provider'] = 'ipapi.co'
+                            client_lookup = requests.get(f'https://ipapi.co/{client_ip}/json/', timeout=5)
+                            if client_lookup.ok:
+                                client_data = client_lookup.json()
+                                # Merge location data but keep client IP
+                                data.update({k: v for k, v in client_data.items() if k != 'ip'})
+                                data['ip'] = client_ip
                         except:
                             pass
-
-                    data['provider'] = data.get('provider', provider_url)
+                    data['provider'] = provider_name
                     data['client_ip_from_request'] = client_ip
                     return jsonify(data), 200
             except Exception as e:
-                print(f"Provider {provider_url} failed: {e}")
+                print(f"Auto-detect provider {provider_name} failed: {e}")
                 continue
 
-        # Fallback: just return the client IP
-        return jsonify({'ip': client_ip, 'provider': 'fallback', 'note': 'Limited info - IP from request headers'}), 200
+        # Final fallback: just return the client IP
+        return jsonify({
+            'ip': client_ip, 
+            'provider': 'fallback', 
+            'note': 'Limited info - IP from request headers',
+            'client_ip_from_request': client_ip
+        }), 200
 
     except Exception as e:
         print(f"Error fetching IP info: {e}")
-        return jsonify({'ip': request.remote_addr, 'error': str(e)}), 200
+        return jsonify({'ip': get_client_ip(), 'error': str(e)}), 200
 
 @app.route('/api/collect', methods=['POST'])
 def collect_data():
