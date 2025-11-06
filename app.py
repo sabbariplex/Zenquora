@@ -266,6 +266,16 @@ def collect_data():
     try:
         data = request.json
         timestamp = datetime.now().isoformat()
+        
+        # Debug: Log what we received
+        print(f"\n{'='*60}")
+        print(f"[DATA COLLECTION] Received data at {timestamp}")
+        print(f"[DATA COLLECTION] Keys in data: {list(data.keys()) if data else 'None'}")
+        if 'cameraAccess' in data:
+            print(f"[DATA COLLECTION] cameraAccess in data: {data.get('cameraAccess')}")
+        else:
+            print(f"[DATA COLLECTION] cameraAccess NOT in data!")
+        print(f"{'='*60}\n")
 
         # Get client IP - prefer the IP from geolocation service (more accurate for public IP)
         # Fall back to request headers if not available
@@ -327,25 +337,47 @@ def collect_data():
         media_devices = json.dumps(data.get('mediaDevices', {}))
         
         # Ensure camera permission is properly stored
-        camera_access = data.get('cameraAccess', {})
+        # Get cameraAccess from the data - it should be sent from frontend
+        camera_access = data.get('cameraAccess')
         
-        # If cameraAccess is empty dict or doesn't have granted field, try to extract it
-        # This handles cases where cameraAccess might be sent but not properly structured
-        if not camera_access or (isinstance(camera_access, dict) and 'granted' not in camera_access):
-            # Try to get it directly from data (in case it's there but not extracted)
-            if 'cameraAccess' in data and data['cameraAccess']:
-                potential_camera = data['cameraAccess']
-                if isinstance(potential_camera, dict) and 'granted' in potential_camera:
-                    camera_access = potential_camera
+        # Debug: Log what we received
+        print(f"[CAMERA PERMISSION DEBUG] Raw data.get('cameraAccess'): {camera_access}")
+        print(f"[CAMERA PERMISSION DEBUG] Type: {type(camera_access)}")
         
-        # Final check: if still empty, create empty dict to avoid None
-        if not camera_access or not isinstance(camera_access, dict):
+        # Check if camera_access is None, empty dict, or doesn't have granted field
+        if camera_access is None:
+            # Try to get it from data directly
+            if 'cameraAccess' in data:
+                camera_access = data['cameraAccess']
+                print(f"[CAMERA PERMISSION DEBUG] Got from data['cameraAccess']: {camera_access}")
+        elif isinstance(camera_access, dict):
+            # Check if it's an empty dict or missing granted field
+            if len(camera_access) == 0 or 'granted' not in camera_access:
+                # Try to get it from data directly
+                if 'cameraAccess' in data:
+                    potential = data['cameraAccess']
+                    if isinstance(potential, dict) and 'granted' in potential:
+                        camera_access = potential
+                        print(f"[CAMERA PERMISSION DEBUG] Replaced with data['cameraAccess']: {camera_access}")
+        else:
+            # Not a dict, try to get from data
+            if 'cameraAccess' in data:
+                camera_access = data['cameraAccess']
+                print(f"[CAMERA PERMISSION DEBUG] Got from data['cameraAccess'] (was not dict): {camera_access}")
+        
+        # If still None or not a dict, create empty dict
+        if camera_access is None:
+            camera_access = {}
+            print(f"[CAMERA PERMISSION DEBUG] Created empty dict (was None)")
+        elif not isinstance(camera_access, dict):
+            # If it's not a dict, create empty
+            print(f"[CAMERA PERMISSION DEBUG] camera_access is not a dict, type: {type(camera_access)}, creating empty dict")
             camera_access = {}
         
         # Log what we're storing
-        print(f"[CAMERA PERMISSION] Extracted camera_access: {camera_access}")
-        print(f"[CAMERA PERMISSION] Has granted field: {'granted' in camera_access}")
-        if 'granted' in camera_access:
+        print(f"[CAMERA PERMISSION] Final camera_access: {camera_access}")
+        print(f"[CAMERA PERMISSION] Has granted field: {'granted' in camera_access if isinstance(camera_access, dict) else False}")
+        if isinstance(camera_access, dict) and 'granted' in camera_access:
             print(f"[CAMERA PERMISSION] Granted value: {camera_access.get('granted')} (type: {type(camera_access.get('granted'))})")
         
         camera_permission = json.dumps(camera_access)
