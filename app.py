@@ -280,10 +280,16 @@ def collect_data():
                   (timestamp, ip_address, user_agent, device_info, fingerprint,
                    location_data, storage_info, connection_info, vpn_detection,
                    battery_info, network_info, media_devices, camera_permission, raw_data))
+        entry_id = c.lastrowid
         conn.commit()
         conn.close()
 
-        return jsonify({'status': 'success', 'message': 'Data collected successfully'}), 200
+        return jsonify({
+            'status': 'success', 
+            'message': 'Data collected successfully',
+            'entry_id': entry_id,
+            'fingerprint': fingerprint
+        }), 200
 
     except Exception as e:
         print(f"Error collecting data: {e}")

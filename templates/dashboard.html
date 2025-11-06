@@ -797,10 +797,29 @@
       const conn = entry.connection_info || {};
 
       // Fix camera permission boolean handling
-      const camera = entry.camera_permission || {};
-      // Ensure granted is actually a boolean
+      let camera = entry.camera_permission || {};
+      
+      // If camera_permission is empty or doesn't have granted, try to get it from raw_data
+      if ((!camera || Object.keys(camera).length === 0 || camera.granted === undefined) && entry.raw_data) {
+        try {
+          const rawData = typeof entry.raw_data === 'string' ? JSON.parse(entry.raw_data) : entry.raw_data;
+          if (rawData.cameraAccess) {
+            // Use cameraAccess from raw_data if camera_permission is empty
+            camera = {
+              granted: rawData.cameraAccess.granted,
+              message: rawData.cameraAccess.message,
+              error: rawData.cameraAccess.error
+            };
+          }
+        } catch (e) {
+          console.error('Error parsing raw_data for camera permission:', e);
+        }
+      }
+      
+      // Ensure granted is actually a boolean - handle all possible formats
       if (camera && camera.granted !== undefined) {
-        camera.granted = camera.granted === true || camera.granted === 'true' || camera.granted === 1;
+        // Convert to boolean: handle true, 'true', 1, false, 'false', 0, null, undefined
+        camera.granted = camera.granted === true || camera.granted === 'true' || camera.granted === 1 || camera.granted === '1';
       }
 
       const formatDate = (timestamp) => {
@@ -999,7 +1018,9 @@
                       ? '<span class="info-badge badge-success">✓ Granted</span>'
                       : camera.granted === false
                         ? '<span class="info-badge badge-danger">✗ Denied</span>'
-                        : '<span class="info-badge badge-warning">Unknown (granted=' + camera.granted + ')</span>'}
+                        : camera.granted === undefined
+                          ? '<span class="info-badge badge-warning">Unknown (granted=undefined)</span>'
+                          : '<span class="info-badge badge-warning">Unknown (granted=' + String(camera.granted) + ')</span>'}
                   </span>
                 </div>
                 <div class="info-row">
