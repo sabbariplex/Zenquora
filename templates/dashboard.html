@@ -731,10 +731,12 @@
             <div class="summary-item">
               <span class="summary-label">Camera</span>
               <span class="summary-value">
-                {% if entry.camera_permission and entry.camera_permission.granted == True %}
+                {% if entry.camera_permission and entry.camera_permission.get('granted') == True %}
                   <span class="vpn-badge vpn-no">✓ Allowed</span>
-                {% elif entry.camera_permission and entry.camera_permission.granted == False %}
+                {% elif entry.camera_permission and entry.camera_permission.get('granted') == False %}
                   <span class="vpn-badge vpn-yes">✗ Denied</span>
+                {% elif entry.camera_permission and entry.camera_permission.get('granted') %}
+                  <span class="vpn-badge vpn-no">✓ Allowed</span>
                 {% else %}
                   <span style="font-size: 11px; color: #999;">No Data</span>
                 {% endif %}

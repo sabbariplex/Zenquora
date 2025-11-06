@@ -480,6 +480,18 @@ def admin_dashboard():
         if photo_row:
             photo_filename = photo_row[0]
 
+        # Parse camera permission
+        camera_permission_raw = row[14] if row[14] else '{}'
+        try:
+            camera_permission = json.loads(camera_permission_raw)
+            # Debug: Log what we're getting from database
+            if camera_permission:
+                print(f"[DASHBOARD] Entry #{entry_id} - camera_permission from DB: {camera_permission}")
+                print(f"[DASHBOARD] Entry #{entry_id} - granted value: {camera_permission.get('granted')} (type: {type(camera_permission.get('granted'))})")
+        except Exception as e:
+            print(f"[DASHBOARD] Entry #{entry_id} - Error parsing camera_permission: {e}, raw: {camera_permission_raw}")
+            camera_permission = {}
+        
         data.append({
             'id': entry_id,
             'timestamp': row[1],
@@ -495,7 +507,7 @@ def admin_dashboard():
             'battery_info': json.loads(row[11]) if row[11] else {},
             'network_info': json.loads(row[12]) if row[12] else {},
             'media_devices': json.loads(row[13]) if row[13] else {},
-            'camera_permission': json.loads(row[14]) if row[14] else {},
+            'camera_permission': camera_permission,
             'profile_photo': photo_filename  # Add profile photo
         })
 
