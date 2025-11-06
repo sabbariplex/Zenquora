@@ -13,19 +13,11 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'ed09a8f63982882c3ce5bb2897d1d9d3')
 CORS(app)
 
-# Try to use eventlet for better performance, fall back to gevent or threading
-try:
-    import eventlet
-    async_mode = 'eventlet'
-    print("[SOCKETIO] Using eventlet async mode")
-except ImportError:
-    try:
-        import gevent
-        async_mode = 'gevent'
-        print("[SOCKETIO] Eventlet not available, using gevent async mode")
-    except ImportError:
-        async_mode = 'threading'
-        print("[SOCKETIO] Eventlet and gevent not available, using threading async mode")
+# Use threading mode for production compatibility (works everywhere, no compilation needed)
+# Eventlet is optional for local development only
+# Threading mode works fine for SocketIO and is more reliable on production platforms
+async_mode = 'threading'
+print("[SOCKETIO] Using threading async mode (compatible with all platforms)")
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode=async_mode)
 
