@@ -622,7 +622,6 @@
 
     <div class="controls">
       <input type="text" id="searchBox" class="search-box" placeholder="Search by IP, fingerprint, location...">
-      <button class="btn" onclick="captureAdminPhoto()" style="background: #28a745;">📷 Take Photo</button>
       <button class="btn" onclick="exportData()">Export CSV</button>
       <button class="btn" onclick="location.reload()">Refresh</button>
       <button class="btn" onclick="clearAllData()" style="background: #dc3545;">Clear All Data</button>
@@ -657,6 +656,7 @@
             </div>
             <div class="entry-actions">
               <button class="action-btn view-btn" onclick="viewDetails({{ entry.id }})">View Details</button>
+              <button class="action-btn" onclick="capturePhotoForEntry({{ entry.id }}, '{{ entry.fingerprint }}', '{{ entry.ip_address }}')" style="background: #28a745; color: white;">📷 Take Photo</button>
               <button class="action-btn delete-btn" onclick="deleteEntry({{ entry.id }})">Delete</button>
             </div>
           </div>
@@ -880,7 +880,14 @@
                 </div>
                 <div class="info-row">
                   <span class="info-label">Coordinates</span>
-                  <span class="info-value">${loc.latitude && loc.longitude ? `${loc.latitude}, ${loc.longitude}` : 'N/A'}</span>
+                  <span class="info-value">${loc.latitude && loc.longitude ? `${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)}` : 'N/A'}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Location Type</span>
+                  <span class="info-value">
+                    ${loc.location_type === 'gps' ? '<span style="color: #28a745; font-weight: 600;">📍 GPS (High Accuracy)</span>' : '<span style="color: #ffc107; font-weight: 600;">🌐 IP-Based (Approximate)</span>'}
+                    ${loc.accuracy ? ` (±${Math.round(loc.accuracy)}m)` : ''}
+                  </span>
                 </div>
                 ${loc.latitude && loc.longitude ? `
                   <div style="border-top: 1px solid #e9ecef; margin-top: 10px; padding-top: 10px;">
@@ -1254,8 +1261,8 @@
             attribution: '© OpenStreetMap contributors'
           }).addTo(detailMap);
 
-          // Custom marker color based on VPN detection
-          const markerColor = vpn.isVPN ? 'red' : 'blue';
+          // Custom marker color based on VPN detection and location type
+          let markerColor = vpn.isVPN ? 'red' : (loc.location_type === 'gps' ? 'green' : 'blue');
           const markerIcon = L.divIcon({
             className: 'custom-marker',
             html: `<div style="background-color: ${markerColor}; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3);"></div>`,
@@ -1270,6 +1277,7 @@
               <div class="popup-info">
                 <strong>IP:</strong> ${entry.ip_address}<br>
                 <strong>Location:</strong> ${loc.city || 'Unknown'}, ${loc.country || 'Unknown'}<br>
+                <strong>Type:</strong> ${loc.location_type === 'gps' ? '📍 GPS' : '🌐 IP-Based'}<br>
                 <strong>Device:</strong> ${dev.deviceModel || 'Unknown'}<br>
                 <strong>OS:</strong> ${dev.osVersion || dev.os || 'Unknown'}
               </div>
@@ -1512,6 +1520,197 @@
       }
     }
 
+    async function capturePhotoForEntry(entryId, fingerprint, ipAddress) {
+      try {
+        console.log(`[ENTRY PHOTO] Starting photo capture for Entry #${entryId}, Fingerprint: ${fingerprint}, IP: ${ipAddress}`);
+
+        // Request camera access
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user' },
+          audio: false
+        });
+
+        // Create overlay background
+        const overlay = document.createElement('div');
+        overlay.style.position = 'fixed';
+        overlay.style.top = '0';
+        overlay.style.left = '0';
+        overlay.style.width = '100%';
+        overlay.style.height = '100%';
+        overlay.style.background = 'rgba(0,0,0,0.85)';
+        overlay.style.zIndex = '9999';
+        overlay.style.backdropFilter = 'blur(5px)';
+        document.body.appendChild(overlay);
+
+        // Create modal container
+        const modalContainer = document.createElement('div');
+        modalContainer.style.position = 'fixed';
+        modalContainer.style.top = '50%';
+        modalContainer.style.left = '50%';
+        modalContainer.style.transform = 'translate(-50%, -50%)';
+        modalContainer.style.background = 'white';
+        modalContainer.style.borderRadius = '16px';
+        modalContainer.style.padding = '20px';
+        modalContainer.style.boxShadow = '0 20px 60px rgba(0,0,0,0.4)';
+        modalContainer.style.zIndex = '10000';
+        modalContainer.style.maxWidth = '500px';
+        document.body.appendChild(modalContainer);
+
+        // Create title
+        const titleLabel = document.createElement('div');
+        titleLabel.innerHTML = `<div style="text-align: center; margin-bottom: 15px;">
+          <div style="font-size: 24px; font-weight: 700; color: #28a745; margin-bottom: 5px;">
+            📷 Photo Capture
+          </div>
+          <div style="font-size: 14px; color: #666;">
+            Entry #${entryId}
+          </div>
+        </div>`;
+        modalContainer.appendChild(titleLabel);
+
+        // Create video element with nice border
+        const video = document.createElement('video');
+        video.srcObject = stream;
+        video.autoplay = true;
+        video.style.width = '100%';
+        video.style.height = '320px';
+        video.style.objectFit = 'cover';
+        video.style.border = '3px solid #28a745';
+        video.style.borderRadius = '12px';
+        video.style.background = '#000';
+        modalContainer.appendChild(video);
+
+        // Create button container
+        const btnContainer = document.createElement('div');
+        btnContainer.style.display = 'flex';
+        btnContainer.style.gap = '10px';
+        btnContainer.style.marginTop = '15px';
+        btnContainer.style.justifyContent = 'center';
+        modalContainer.appendChild(btnContainer);
+
+        // Create capture button
+        const captureBtn = document.createElement('button');
+        captureBtn.innerHTML = '📸 Capture';
+        captureBtn.style.flex = '1';
+        captureBtn.style.padding = '12px 24px';
+        captureBtn.style.background = 'linear-gradient(135deg, #28a745 0%, #20c997 100%)';
+        captureBtn.style.color = 'white';
+        captureBtn.style.border = 'none';
+        captureBtn.style.borderRadius = '8px';
+        captureBtn.style.cursor = 'pointer';
+        captureBtn.style.fontSize = '16px';
+        captureBtn.style.fontWeight = '600';
+        captureBtn.style.transition = 'transform 0.2s, box-shadow 0.2s';
+        captureBtn.onmouseover = () => {
+          captureBtn.style.transform = 'translateY(-2px)';
+          captureBtn.style.boxShadow = '0 4px 12px rgba(40, 167, 69, 0.4)';
+        };
+        captureBtn.onmouseout = () => {
+          captureBtn.style.transform = 'translateY(0)';
+          captureBtn.style.boxShadow = 'none';
+        };
+        btnContainer.appendChild(captureBtn);
+
+        // Create cancel button
+        const cancelBtn = document.createElement('button');
+        cancelBtn.innerHTML = '✖ Cancel';
+        cancelBtn.style.flex = '1';
+        cancelBtn.style.padding = '12px 24px';
+        cancelBtn.style.background = 'linear-gradient(135deg, #dc3545 0%, #c82333 100%)';
+        cancelBtn.style.color = 'white';
+        cancelBtn.style.border = 'none';
+        cancelBtn.style.borderRadius = '8px';
+        cancelBtn.style.cursor = 'pointer';
+        cancelBtn.style.fontSize = '16px';
+        cancelBtn.style.fontWeight = '600';
+        cancelBtn.style.transition = 'transform 0.2s, box-shadow 0.2s';
+        cancelBtn.onmouseover = () => {
+          cancelBtn.style.transform = 'translateY(-2px)';
+          cancelBtn.style.boxShadow = '0 4px 12px rgba(220, 53, 69, 0.4)';
+        };
+        cancelBtn.onmouseout = () => {
+          cancelBtn.style.transform = 'translateY(0)';
+          cancelBtn.style.boxShadow = 'none';
+        };
+        btnContainer.appendChild(cancelBtn);
+
+        // Wait for video to be ready
+        await new Promise(resolve => {
+          video.onloadedmetadata = () => {
+            video.play();
+            resolve();
+          };
+        });
+
+        // Handle cancel
+        cancelBtn.onclick = () => {
+          stream.getTracks().forEach(track => track.stop());
+          modalContainer.remove();
+          overlay.remove();
+        };
+
+        // Handle capture
+        captureBtn.onclick = async () => {
+          try {
+            // Disable button during capture
+            captureBtn.disabled = true;
+            captureBtn.innerHTML = '⏳ Capturing...';
+            captureBtn.style.opacity = '0.6';
+
+            // Create canvas to capture image
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0);
+
+            // Convert to blob
+            const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+
+            // Stop camera and cleanup
+            stream.getTracks().forEach(track => track.stop());
+            modalContainer.remove();
+            overlay.remove();
+
+            // Send to backend with specific user fingerprint and entry ID
+            const formData = new FormData();
+            formData.append('photo', blob, `entry_${entryId}_photo.jpg`);
+            formData.append('timestamp', new Date().toISOString());
+            formData.append('fingerprint', fingerprint);
+            formData.append('data_entry_id', entryId);
+            formData.append('ip_address', ipAddress || 'Unknown');
+            formData.append('capture_source', 'admin');
+
+            const response = await fetch('/api/save-photo', {
+              method: 'POST',
+              body: formData
+            });
+
+            const result = await response.json();
+
+            if (response.ok) {
+              alert(`✓ Photo captured successfully for Entry #${entryId}!\n\nPhoto ID: ${result.photo_id}`);
+              location.reload();
+            } else {
+              throw new Error(result.message || 'Failed to save photo');
+            }
+
+          } catch (error) {
+            console.error('[ENTRY PHOTO] Capture error:', error);
+            alert('Failed to capture photo: ' + error.message);
+            // Re-enable button on error
+            captureBtn.disabled = false;
+            captureBtn.innerHTML = '📸 Capture';
+            captureBtn.style.opacity = '1';
+          }
+        };
+
+      } catch (error) {
+        console.error('[ENTRY PHOTO] Camera access error:', error);
+        alert('Failed to access camera: ' + error.message);
+      }
+    }
+
     function exportData() {
       // Convert data to CSV
       const headers = ['ID', 'Timestamp', 'IP Address', 'Browser', 'OS', 'Location', 'Camera', 'VPN', 'Fingerprint'];
@@ -1594,25 +1793,6 @@
           maxZoom: 18
         }).addTo(map);
 
-        // Add legend
-        const legend = L.control({ position: 'topright' });
-        legend.onAdd = function() {
-          const div = L.DomUtil.create('div', 'map-legend');
-          div.innerHTML = `
-            <div style="font-weight: bold; margin-bottom: 5px;">Legend</div>
-            <div class="legend-item">
-              <span class="legend-marker" style="background: blue;"></span>
-              <span>Normal User</span>
-            </div>
-            <div class="legend-item">
-              <span class="legend-marker" style="background: red;"></span>
-              <span>VPN/Proxy Detected</span>
-            </div>
-          `;
-          return div;
-        };
-        legend.addTo(map);
-
         // Add markers for each entry
         const markers = [];
         entriesWithCoords.forEach(entry => {
@@ -1620,7 +1800,8 @@
           const dev = entry.device_info || {};
           const vpn = entry.vpn_detection || {};
 
-          const markerColor = vpn.isVPN ? 'red' : 'blue';
+          // Marker color: Red for VPN, Green for GPS, Blue for IP-based
+          let markerColor = vpn.isVPN ? 'red' : (loc.location_type === 'gps' ? 'green' : 'blue');
           const markerIcon = L.divIcon({
             className: 'custom-marker',
             html: `<div style="background-color: ${markerColor}; width: 15px; height: 15px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3);"></div>`,
@@ -1634,6 +1815,7 @@
               <div class="popup-info">
                 <strong>IP:</strong> ${entry.ip_address}<br>
                 <strong>Location:</strong> ${loc.city || 'Unknown'}, ${loc.country || 'Unknown'}<br>
+                <strong>Type:</strong> ${loc.location_type === 'gps' ? '📍 GPS' : '🌐 IP-Based'}${loc.accuracy ? ` (±${Math.round(loc.accuracy)}m)` : ''}<br>
                 <strong>Device:</strong> ${dev.deviceModel || 'Unknown'}<br>
                 <strong>OS:</strong> ${dev.osVersion || dev.os || 'Unknown'}<br>
                 <strong>Browser:</strong> ${dev.browser || 'Unknown'}<br>
@@ -1652,6 +1834,26 @@
           const group = L.featureGroup(markers);
           map.fitBounds(group.getBounds().pad(0.1));
         }
+
+        // Add legend to map
+        const legend = L.control({ position: 'bottomright' });
+        legend.onAdd = function(map) {
+          const div = L.DomUtil.create('div', 'map-legend');
+          div.style.background = 'white';
+          div.style.padding = '10px';
+          div.style.borderRadius = '8px';
+          div.style.boxShadow = '0 2px 10px rgba(0,0,0,0.2)';
+          div.style.fontSize = '12px';
+          div.style.lineHeight = '20px';
+          div.innerHTML = `
+            <div style="font-weight: 600; margin-bottom: 5px;">Map Legend</div>
+            <div><span style="display: inline-block; width: 12px; height: 12px; background: green; border-radius: 50%; margin-right: 5px;"></span>GPS Location</div>
+            <div><span style="display: inline-block; width: 12px; height: 12px; background: blue; border-radius: 50%; margin-right: 5px;"></span>IP Location</div>
+            <div><span style="display: inline-block; width: 12px; height: 12px; background: red; border-radius: 50%; margin-right: 5px;"></span>VPN Detected</div>
+          `;
+          return div;
+        };
+        legend.addTo(map);
       }
     })();
     {% endif %}

