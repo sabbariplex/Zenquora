@@ -308,14 +308,42 @@ def collect_data():
 
         if device_coords and device_coords.get('lat') and device_coords.get('lon'):
             # User granted location permission - use GPS coordinates
+            # Try to reverse geocode GPS coordinates to get accurate city/country
+            gps_lat = device_coords.get('lat')
+            gps_lon = device_coords.get('lon')
+            
+            # Use reverse geocoding to get location from GPS coordinates
+            gps_city = None
+            gps_country = None
+            gps_region = None
+            
+            try:
+                # Try reverse geocoding using OpenStreetMap Nominatim (free, no API key needed)
+                reverse_geocode_url = f'https://nominatim.openstreetmap.org/reverse?format=json&lat={gps_lat}&lon={gps_lon}&zoom=10'
+                reverse_response = requests.get(reverse_geocode_url, timeout=5, headers={'User-Agent': 'LocationTracker/1.0'})
+                if reverse_response.ok:
+                    reverse_data = reverse_response.json()
+                    address = reverse_data.get('address', {})
+                    gps_city = address.get('city') or address.get('town') or address.get('village') or address.get('municipality')
+                    gps_country = address.get('country')
+                    gps_region = address.get('state') or address.get('region')
+                    print(f"[GPS REVERSE GEOCODE] Got location: {gps_city}, {gps_region}, {gps_country}")
+            except Exception as e:
+                print(f"[GPS REVERSE GEOCODE] Failed: {e}, using IP-based location info")
+            
+            # Use GPS-based location if available, otherwise fall back to IP-based
             location_data = json.dumps({
-                **normalized_location,  # Use normalized location data
+                **normalized_location,  # Keep IP info for reference
                 'gps': device_coords,
-                'latitude': device_coords.get('lat'),
-                'longitude': device_coords.get('lon'),
+                'latitude': gps_lat,
+                'longitude': gps_lon,
                 'location_type': 'gps',
                 'accuracy': device_coords.get('accuracy'),
-                'altitude': device_coords.get('altitude')
+                'altitude': device_coords.get('altitude'),
+                # Use GPS-based city/country if available, otherwise use IP-based
+                'city': gps_city or normalized_location.get('city'),
+                'country': gps_country or normalized_location.get('country'),
+                'region': gps_region or normalized_location.get('region')
             })
         else:
             # Location permission denied - use IP-based location
@@ -484,12 +512,32 @@ def admin_dashboard():
         camera_permission_raw = row[14] if row[14] else '{}'
         try:
             camera_permission = json.loads(camera_permission_raw)
+            
+            # Check if camera_permission contains the entire raw_data (old bug)
+            # If it has 'deviceInfo', 'fingerprint', etc., it's the full raw data
+            # In that case, extract cameraAccess from it
+            if camera_permission and isinstance(camera_permission, dict):
+                if 'deviceInfo' in camera_permission or 'fingerprint' in camera_permission:
+                    # This is the entire raw_data, extract cameraAccess
+                    print(f"[DASHBOARD] Entry #{entry_id} - camera_permission contains full raw_data, extracting cameraAccess")
+                    if 'cameraAccess' in camera_permission:
+                        camera_permission = camera_permission['cameraAccess']
+                        print(f"[DASHBOARD] Entry #{entry_id} - Extracted cameraAccess: {camera_permission}")
+                    else:
+                        camera_permission = {}
+                elif 'granted' in camera_permission:
+                    # This is the correct format - just camera permission data
+                    print(f"[DASHBOARD] Entry #{entry_id} - camera_permission is correct format: {camera_permission}")
+                else:
+                    # Empty or malformed
+                    camera_permission = {}
+            
             # Debug: Log what we're getting from database
             if camera_permission:
-                print(f"[DASHBOARD] Entry #{entry_id} - camera_permission from DB: {camera_permission}")
+                print(f"[DASHBOARD] Entry #{entry_id} - Final camera_permission: {camera_permission}")
                 print(f"[DASHBOARD] Entry #{entry_id} - granted value: {camera_permission.get('granted')} (type: {type(camera_permission.get('granted'))})")
         except Exception as e:
-            print(f"[DASHBOARD] Entry #{entry_id} - Error parsing camera_permission: {e}, raw: {camera_permission_raw}")
+            print(f"[DASHBOARD] Entry #{entry_id} - Error parsing camera_permission: {e}, raw: {camera_permission_raw[:200]}...")
             camera_permission = {}
         
         data.append({
