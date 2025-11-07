@@ -28,7 +28,9 @@ if __name__ == '__main__':
     print(f"[STARTUP] Starting server on 0.0.0.0:{port}")
     print(f"[STARTUP] Debug mode: {debug}")
     print(f"[STARTUP] Environment: {'development' if is_dev else 'production'}")
+    print(f"[STARTUP] PORT environment variable: {os.environ.get('PORT', 'NOT SET')}")
     print(f"[STARTUP] Application ready to accept connections")
+    print(f"[STARTUP] Health check available at: http://0.0.0.0:{port}/health")
 
     # Use SocketIO's built-in server (works with eventlet mode)
     # This is production-ready for Railway
@@ -37,7 +39,8 @@ if __name__ == '__main__':
         host='0.0.0.0',
         port=port,
         debug=debug,
-        log_output=False,  # Disable to prevent false error logs
-        use_reloader=False
+        log_output=True,  # Enable logging to help debug Railway issues
+        use_reloader=False,
+        allow_unsafe_werkzeug=True
     )
 
