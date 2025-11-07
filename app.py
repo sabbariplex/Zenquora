@@ -13,14 +13,28 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'ed09a8f63982882c3ce5bb2897d1d9d3')
 CORS(app)
 
-# Use gevent mode for production with Gunicorn
-# Gevent provides better performance and WebSocket support with Gunicorn
-async_mode = 'gevent'
-print("[SOCKETIO] Using gevent async mode (production-ready with Gunicorn)")
+# Use eventlet mode for production (better compatibility with Railway)
+# Eventlet provides excellent WebSocket support and works well with socketio.run()
+# Auto-detect best async mode based on environment
+if os.environ.get('RAILWAY_ENVIRONMENT') or os.environ.get('RENDER'):
+    # Try eventlet first (more stable for production with socketio.run())
+    try:
+        import eventlet
+        eventlet.monkey_patch()
+        async_mode = 'eventlet'
+        print("[SOCKETIO] Using eventlet async mode (production-ready)")
+    except ImportError:
+        # Fall back to threading if eventlet not available
+        async_mode = 'threading'
+        print("[SOCKETIO] Eventlet not available, using threading mode")
+else:
+    # Use threading for local development
+    async_mode = 'threading'
+    print("[SOCKETIO] Using threading async mode (development)")
 
 socketio = SocketIO(
-    app, 
-    cors_allowed_origins="*", 
+    app,
+    cors_allowed_origins="*",
     async_mode=async_mode,
     logger=True,
     engineio_logger=True,
