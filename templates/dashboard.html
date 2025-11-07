@@ -871,15 +871,16 @@
           }
         });
 
-      socket.on('photo_request_error', (data) => {
-        console.error('[WEBSOCKET] Photo request error:', data);
-        alert('⚠️ ' + (data.error || 'Unknown error') + '\n\n' + (data.suggestion || ''));
-      });
+        socket.on('photo_request_error', (data) => {
+          console.error('[WEBSOCKET] Photo request error:', data);
+          alert('⚠️ ' + (data.error || 'Unknown error') + '\n\n' + (data.suggestion || ''));
+        });
 
-      // Listen for user status updates (online/offline)
-      socket.on('user_status_update', (data) => {
-        console.log('[WEBSOCKET] User status update:', data);
-        updateUserStatus(data.entry_id, data.is_online);
+        // Listen for user status updates (online/offline)
+        socket.on('user_status_update', (data) => {
+          console.log('[WEBSOCKET] User status update:', data);
+          updateUserStatus(data.entry_id, data.is_online);
+        });
       });
     }
 
