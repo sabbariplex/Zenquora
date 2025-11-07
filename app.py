@@ -879,6 +879,19 @@ def handle_connect():
     """Handle WebSocket connection"""
     print(f"[WEBSOCKET] Client connected: {request.sid}")
 
+@socketio.on('ping')
+def handle_ping(data):
+    """Handle periodic ping from client to keep connection alive"""
+    entry_id = data.get('entry_id')
+    fingerprint = data.get('fingerprint', '')
+    
+    if entry_id and entry_id in active_users:
+        # Update last ping time
+        active_users[entry_id]['last_ping'] = datetime.now().isoformat()
+        # Update socket_id in case it changed (reconnection)
+        active_users[entry_id]['socket_id'] = request.sid
+        print(f"[WEBSOCKET] Ping received from entry {entry_id}")
+
 @socketio.on('disconnect')
 def handle_disconnect():
     """Handle WebSocket disconnection"""
@@ -902,19 +915,25 @@ def handle_register_user(data):
     fingerprint = data.get('fingerprint', '')
     
     if entry_id:
+        # Update or create user registration
+        # This handles re-registration after reconnection
+        was_online = entry_id in active_users
+        
         active_users[entry_id] = {
             'socket_id': request.sid,
             'fingerprint': fingerprint,
-            'registered_at': datetime.now().isoformat()
+            'registered_at': datetime.now().isoformat(),
+            'last_ping': datetime.now().isoformat()
         }
         join_room(f'user_{entry_id}')
         print(f"[WEBSOCKET] Registered user entry {entry_id} with fingerprint {fingerprint[:16]}...")
         
-        # Broadcast user status update to admin dashboard
-        emit('user_status_update', {
-            'entry_id': entry_id,
-            'is_online': True
-        }, broadcast=True, include_self=False)
+        # Broadcast user status update to admin dashboard (only if status changed)
+        if not was_online:
+            emit('user_status_update', {
+                'entry_id': entry_id,
+                'is_online': True
+            }, broadcast=True, include_self=False)
         
         # Check if there are any pending photo requests for this user
         if entry_id in pending_photo_requests:

