@@ -14,8 +14,7 @@ app.secret_key = os.environ.get('SECRET_KEY', 'ed09a8f63982882c3ce5bb2897d1d9d3'
 CORS(app)
 
 # Use threading mode for production compatibility (works everywhere, no compilation needed)
-# Eventlet is optional for local development only
-# Threading mode works fine for SocketIO and is more reliable on production platforms
+# Threading mode works fine with Gunicorn sync workers
 async_mode = 'threading'
 print("[SOCKETIO] Using threading async mode (compatible with all platforms)")
 
