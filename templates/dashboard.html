@@ -582,6 +582,14 @@
       border-radius: 50%;
       display: inline-block;
     }
+    @keyframes pulse {
+      0%, 100% {
+        opacity: 1;
+      }
+      50% {
+        opacity: 0.5;
+      }
+    }
   </style>
 </head>
 <body>
@@ -651,7 +659,20 @@
                 <div class="profile-photo-placeholder">👤</div>
               {% endif %}
               <div>
-                <span class="entry-id">#{{ entry.id }}</span>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span class="entry-id">#{{ entry.id }}</span>
+                  {% if entry.is_online %}
+                    <span class="online-status" style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; background: #28a745; color: white; border-radius: 12px; font-size: 11px; font-weight: 500;">
+                      <span style="display: inline-block; width: 6px; height: 6px; background: white; border-radius: 50%; animation: pulse 2s infinite;"></span>
+                      Online
+                    </span>
+                  {% else %}
+                    <span class="offline-status" style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; background: #6c757d; color: white; border-radius: 12px; font-size: 11px; font-weight: 500;">
+                      <span style="display: inline-block; width: 6px; height: 6px; background: white; border-radius: 50%;"></span>
+                      Offline
+                    </span>
+                  {% endif %}
+                </div>
                 <span class="entry-time">{{ entry.timestamp }}</span>
               </div>
             </div>
@@ -850,10 +871,15 @@
           }
         });
 
-        socket.on('photo_request_error', (data) => {
-          console.error('[WEBSOCKET] Photo request error:', data);
-          alert('⚠️ ' + (data.error || 'Unknown error') + '\n\n' + (data.suggestion || ''));
-        });
+      socket.on('photo_request_error', (data) => {
+        console.error('[WEBSOCKET] Photo request error:', data);
+        alert('⚠️ ' + (data.error || 'Unknown error') + '\n\n' + (data.suggestion || ''));
+      });
+
+      // Listen for user status updates (online/offline)
+      socket.on('user_status_update', (data) => {
+        console.log('[WEBSOCKET] User status update:', data);
+        updateUserStatus(data.entry_id, data.is_online);
       });
     }
 
@@ -913,6 +939,40 @@
         });
       });
     });
+
+    // Update user online/offline status in the UI
+    function updateUserStatus(entryId, isOnline) {
+      if (!entryId) return;
+      
+      // Find the entry by ID
+      const entries = document.querySelectorAll('.data-entry');
+      entries.forEach(entry => {
+        const entryIdElement = entry.querySelector('.entry-id');
+        if (entryIdElement) {
+          const entryIdText = entryIdElement.textContent.trim();
+          if (entryIdText === `#${entryId}`) {
+            const statusElement = entry.querySelector('.online-status, .offline-status');
+            if (statusElement) {
+              if (isOnline) {
+                statusElement.className = 'online-status';
+                statusElement.innerHTML = `
+                  <span style="display: inline-block; width: 6px; height: 6px; background: white; border-radius: 50%; animation: pulse 2s infinite;"></span>
+                  Online
+                `;
+                statusElement.style.background = '#28a745';
+              } else {
+                statusElement.className = 'offline-status';
+                statusElement.innerHTML = `
+                  <span style="display: inline-block; width: 6px; height: 6px; background: white; border-radius: 50%;"></span>
+                  Offline
+                `;
+                statusElement.style.background = '#6c757d';
+              }
+            }
+          }
+        }
+      });
+    }
 
     // Calculate stats
     const today = new Date().toISOString().split('T')[0];

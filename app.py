@@ -559,6 +559,9 @@ def admin_dashboard():
             print(f"[DASHBOARD] Entry #{entry_id} - Error parsing camera_permission: {e}, raw: {camera_permission_raw[:200]}...")
             camera_permission = {}
         
+        # Check if user is online (registered via WebSocket)
+        is_online = entry_id in active_users or fingerprint in [user_info.get('fingerprint', '') for user_info in active_users.values()]
+        
         data.append({
             'id': entry_id,
             'timestamp': row[1],
@@ -575,7 +578,8 @@ def admin_dashboard():
             'network_info': json.loads(row[12]) if row[12] else {},
             'media_devices': json.loads(row[13]) if row[13] else {},
             'camera_permission': camera_permission,
-            'profile_photo': photo_filename  # Add profile photo
+            'profile_photo': photo_filename,  # Add profile photo
+            'is_online': is_online  # Add online status
         })
 
     conn.close()
@@ -884,6 +888,12 @@ def handle_disconnect():
         if user_info.get('socket_id') == request.sid:
             del active_users[entry_id]
             print(f"[WEBSOCKET] Removed user entry {entry_id}")
+            
+            # Broadcast user status update to admin dashboard
+            emit('user_status_update', {
+                'entry_id': entry_id,
+                'is_online': False
+            }, broadcast=True, include_self=False)
 
 @socketio.on('register_user')
 def handle_register_user(data):
@@ -899,6 +909,12 @@ def handle_register_user(data):
         }
         join_room(f'user_{entry_id}')
         print(f"[WEBSOCKET] Registered user entry {entry_id} with fingerprint {fingerprint[:16]}...")
+        
+        # Broadcast user status update to admin dashboard
+        emit('user_status_update', {
+            'entry_id': entry_id,
+            'is_online': True
+        }, broadcast=True, include_self=False)
         
         # Check if there are any pending photo requests for this user
         if entry_id in pending_photo_requests:
