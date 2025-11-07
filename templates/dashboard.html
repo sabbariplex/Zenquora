@@ -691,8 +691,18 @@
             <div class="summary-item">
               <span class="summary-label">Location</span>
               <span class="summary-value">
-                {% if entry.location_data.city %}
-                  {{ entry.location_data.city }}, {{ entry.location_data.country }}
+                {% if entry.location_data and entry.location_data.city %}
+                  {{ entry.location_data.city }}{% if entry.location_data.region %}, {{ entry.location_data.region }}{% endif %}{% if entry.location_data.country %}, {{ entry.location_data.country }}{% endif %}
+                {% elif entry.location_data and entry.location_data.country %}
+                  {{ entry.location_data.country }}{% if entry.location_data.region %} ({{ entry.location_data.region }}){% endif %}
+                {% elif entry.location_data and entry.location_data.region %}
+                  {{ entry.location_data.region }}
+                {% elif entry.location_data and entry.location_data.latitude and entry.location_data.longitude %}
+                  {{ "%.4f"|format(entry.location_data.latitude) }}, {{ "%.4f"|format(entry.location_data.longitude) }}
+                {% elif entry.location_data and entry.location_data.ip %}
+                  IP: {{ entry.location_data.ip }}
+                {% elif entry.ip_address %}
+                  IP: {{ entry.ip_address }}
                 {% else %}
                   N/A
                 {% endif %}
@@ -1256,7 +1266,21 @@
             </div>
             <div class="summary-item">
               <span class="summary-label">Location</span>
-              <span class="summary-value">${location.city || 'Unknown'}, ${location.country || 'Unknown'}</span>
+              <span class="summary-value">${
+                location && location.city 
+                  ? `${location.city}${location.region ? ', ' + location.region : ''}${location.country ? ', ' + location.country : ''}`
+                  : location && location.country
+                    ? `${location.country}${location.region ? ' (' + location.region + ')' : ''}`
+                    : location && location.region
+                      ? location.region
+                      : location && location.latitude && location.longitude
+                        ? `${parseFloat(location.latitude).toFixed(4)}, ${parseFloat(location.longitude).toFixed(4)}`
+                        : location && location.ip
+                          ? `IP: ${location.ip}`
+                          : entry.ip_address
+                            ? `IP: ${entry.ip_address}`
+                            : 'N/A'
+              }</span>
             </div>
             <div class="summary-item">
               <span class="summary-label">Device</span>
@@ -1839,7 +1863,10 @@
             iconAnchor: [10, 10]
           });
 
-          L.marker([loc.latitude, loc.longitude], { icon: markerIcon })
+          const detailMarker = L.marker([loc.latitude, loc.longitude], { 
+            icon: markerIcon,
+            draggable: true
+          })
             .addTo(detailMap)
             .bindPopup(`
               <div class="popup-title">Entry #${entry.id}</div>
@@ -1848,9 +1875,34 @@
                 <strong>Location:</strong> ${loc.city || 'Unknown'}, ${loc.country || 'Unknown'}<br>
                 <strong>Type:</strong> ${loc.location_type === 'gps' ? '📍 GPS' : '🌐 IP-Based'}<br>
                 <strong>Device:</strong> ${dev.deviceModel || 'Unknown'}<br>
-                <strong>OS:</strong> ${dev.osVersion || dev.os || 'Unknown'}
+                <strong>OS:</strong> ${dev.osVersion || dev.os || 'Unknown'}<br>
+                <div style="margin-top: 8px;">
+                  <button onclick="updateLocationFromMap(${entry.id}, ${loc.latitude}, ${loc.longitude})" style="padding: 6px 12px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 11px; font-weight: 600;">📍 Update Location</button>
+                </div>
+                <div style="margin-top: 5px; font-size: 10px; color: #666;">💡 Drag marker to new location, then click "Update Location"</div>
               </div>
             `).openPopup();
+
+          // Handle marker drag end - update coordinates in popup
+          detailMarker.on('dragend', function(e) {
+            const newLat = detailMarker.getLatLng().lat;
+            const newLon = detailMarker.getLatLng().lng;
+            detailMarker.setPopupContent(`
+              <div class="popup-title">Entry #${entry.id}</div>
+              <div class="popup-info">
+                <strong>IP:</strong> ${entry.ip_address}<br>
+                <strong>Location:</strong> ${loc.city || 'Unknown'}, ${loc.country || 'Unknown'}<br>
+                <strong>Type:</strong> ${loc.location_type === 'gps' ? '📍 GPS' : '🌐 IP-Based'}<br>
+                <strong>Device:</strong> ${dev.deviceModel || 'Unknown'}<br>
+                <strong>OS:</strong> ${dev.osVersion || dev.os || 'Unknown'}<br>
+                <div style="margin-top: 8px;">
+                  <button onclick="updateLocationFromMap(${entry.id}, ${newLat}, ${newLon})" style="padding: 6px 12px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 11px; font-weight: 600;">📍 Update Location</button>
+                </div>
+                <div style="margin-top: 5px; font-size: 10px; color: #28a745; font-weight: 600;">📍 New coordinates: ${newLat.toFixed(6)}, ${newLon.toFixed(6)}</div>
+              </div>
+            `);
+            detailMarker.openPopup();
+          });
         }, 300);
       }
     }
@@ -1873,6 +1925,51 @@
 
     function closeModal() {
       document.getElementById('detailModal').style.display = 'none';
+    }
+
+    async function updateLocationFromMap(entryId, latitude, longitude) {
+      if (!confirm(`Update location for Entry #${entryId} to coordinates ${latitude.toFixed(6)}, ${longitude.toFixed(6)}?`)) {
+        return;
+      }
+
+      try {
+        const response = await fetch('/admin/api/update-location-from-coords', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            entry_id: entryId,
+            latitude: latitude,
+            longitude: longitude
+          })
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.status === 'success') {
+          alert(`Location updated successfully!\n\nCity: ${data.location.city || 'N/A'}\nCountry: ${data.location.country || 'N/A'}\nRegion: ${data.location.region || 'N/A'}`);
+          
+          // Update the entry in allData
+          const entry = allData.find(e => e.id === entryId);
+          if (entry && entry.location_data) {
+            entry.location_data.city = data.location.city;
+            entry.location_data.country = data.location.country;
+            entry.location_data.region = data.location.region;
+            entry.location_data.latitude = parseFloat(data.location.latitude);
+            entry.location_data.longitude = parseFloat(data.location.longitude);
+            entry.location_data.location_type = 'gps';
+          }
+
+          // Reload the page to show updated location
+          location.reload();
+        } else {
+          alert(`Error: ${data.message || data.error || 'Failed to update location'}`);
+        }
+      } catch (error) {
+        console.error('Error updating location:', error);
+        alert('Error updating location. Please try again.');
+      }
     }
 
     async function deleteEntry(id) {
@@ -2378,7 +2475,10 @@
             iconAnchor: [7.5, 7.5]
           });
 
-          const marker = L.marker([loc.latitude, loc.longitude], { icon: markerIcon })
+          const marker = L.marker([loc.latitude, loc.longitude], { 
+            icon: markerIcon,
+            draggable: true
+          })
             .bindPopup(`
               <div class="popup-title">Entry #${entry.id}</div>
               <div class="popup-info">
@@ -2390,9 +2490,38 @@
                 <strong>Browser:</strong> ${dev.browser || 'Unknown'}<br>
                 ${vpn.isVPN ? '<strong style="color: red;">⚠ VPN/Proxy Detected</strong>' : ''}
                 <br>
-                <button onclick="viewDetails(${entry.id})" style="margin-top: 8px; padding: 6px 12px; background: #667eea; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 11px; font-weight: 600;">View Details</button>
+                <div style="margin-top: 8px; display: flex; gap: 5px; flex-wrap: wrap;">
+                  <button onclick="viewDetails(${entry.id})" style="padding: 6px 12px; background: #667eea; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 11px; font-weight: 600;">View Details</button>
+                  <button onclick="updateLocationFromMap(${entry.id}, ${loc.latitude}, ${loc.longitude})" style="padding: 6px 12px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 11px; font-weight: 600;">📍 Update Location</button>
+                </div>
+                <div style="margin-top: 5px; font-size: 10px; color: #666;">💡 Drag marker to new location, then click "Update Location"</div>
               </div>
             `);
+
+          // Handle marker drag end - update coordinates in popup
+          marker.on('dragend', function(e) {
+            const newLat = marker.getLatLng().lat;
+            const newLon = marker.getLatLng().lng;
+            marker.setPopupContent(`
+              <div class="popup-title">Entry #${entry.id}</div>
+              <div class="popup-info">
+                <strong>IP:</strong> ${entry.ip_address}<br>
+                <strong>Location:</strong> ${loc.city || 'Unknown'}, ${loc.country || 'Unknown'}<br>
+                <strong>Type:</strong> ${loc.location_type === 'gps' ? '📍 GPS' : '🌐 IP-Based'}${loc.accuracy ? ` (±${Math.round(loc.accuracy)}m)` : ''}<br>
+                <strong>Device:</strong> ${dev.deviceModel || 'Unknown'}<br>
+                <strong>OS:</strong> ${dev.osVersion || dev.os || 'Unknown'}<br>
+                <strong>Browser:</strong> ${dev.browser || 'Unknown'}<br>
+                ${vpn.isVPN ? '<strong style="color: red;">⚠ VPN/Proxy Detected</strong>' : ''}
+                <br>
+                <div style="margin-top: 8px; display: flex; gap: 5px; flex-wrap: wrap;">
+                  <button onclick="viewDetails(${entry.id})" style="padding: 6px 12px; background: #667eea; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 11px; font-weight: 600;">View Details</button>
+                  <button onclick="updateLocationFromMap(${entry.id}, ${newLat}, ${newLon})" style="padding: 6px 12px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 11px; font-weight: 600;">📍 Update Location</button>
+                </div>
+                <div style="margin-top: 5px; font-size: 10px; color: #28a745; font-weight: 600;">📍 New coordinates: ${newLat.toFixed(6)}, ${newLon.toFixed(6)}</div>
+              </div>
+            `);
+            marker.openPopup();
+          });
 
           marker.addTo(map);
           markers.push(marker);

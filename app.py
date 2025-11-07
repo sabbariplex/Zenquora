@@ -1051,6 +1051,102 @@ def update_locations_from_coordinates():
         print(f"Error updating locations: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+@app.route('/admin/api/update-location-from-coords', methods=['POST'])
+def update_location_from_coordinates():
+    """Update location data for an entry based on coordinates"""
+    if not session.get('admin_logged_in'):
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        data = request.json
+        entry_id = data.get('entry_id')
+        latitude = data.get('latitude')
+        longitude = data.get('longitude')
+        
+        if not entry_id or not latitude or not longitude:
+            return jsonify({'error': 'Missing required fields: entry_id, latitude, longitude'}), 400
+
+        # Helper function to reverse geocode coordinates to English location names
+        def reverse_geocode_coordinates(lat, lon):
+            """Reverse geocode coordinates to get English location names"""
+            try:
+                reverse_geocode_url = f'https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&accept-language=en'
+                reverse_response = requests.get(
+                    reverse_geocode_url, 
+                    timeout=5, 
+                    headers={'User-Agent': 'LocationTracker/1.0', 'Accept-Language': 'en'}
+                )
+                if reverse_response.ok:
+                    reverse_data = reverse_response.json()
+                    address = reverse_data.get('address', {})
+                    city = address.get('city') or address.get('town') or address.get('village') or address.get('municipality')
+                    country = address.get('country')
+                    region = address.get('state') or address.get('region') or address.get('county')
+                    return {
+                        'city': city,
+                        'country': country,
+                        'region': region
+                    }
+            except Exception as e:
+                print(f"[UPDATE LOCATION] Failed reverse geocode for {lat},{lon}: {e}")
+            return None
+
+        # Reverse geocode the coordinates
+        reverse_geocoded = reverse_geocode_coordinates(latitude, longitude)
+        if not reverse_geocoded:
+            return jsonify({'error': 'Failed to reverse geocode coordinates'}), 500
+
+        # Get existing entry data
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('SELECT location_data FROM collected_data WHERE id = ?', (entry_id,))
+        row = c.fetchone()
+        
+        if not row:
+            conn.close()
+            return jsonify({'error': 'Entry not found'}), 404
+
+        # Parse existing location data
+        try:
+            location_data = json.loads(row[0]) if row[0] else {}
+        except:
+            location_data = {}
+
+        # Update location data with new coordinates and reverse geocoded location
+        location_data.update({
+            'latitude': float(latitude),
+            'longitude': float(longitude),
+            'city': reverse_geocoded.get('city') or location_data.get('city'),
+            'country': reverse_geocoded.get('country') or location_data.get('country'),
+            'region': reverse_geocoded.get('region') or location_data.get('region'),
+            'location_type': 'gps',  # Mark as GPS since it's manually updated from map
+            'updated_from_map': True,
+            'updated_at': datetime.now().isoformat()
+        })
+
+        # Update database
+        c.execute('UPDATE collected_data SET location_data = ? WHERE id = ?', 
+                 (json.dumps(location_data), entry_id))
+        conn.commit()
+        conn.close()
+
+        print(f"[UPDATE LOCATION] Updated entry #{entry_id} with location: {reverse_geocoded.get('city')}, {reverse_geocoded.get('country')} at {latitude},{longitude}")
+
+        return jsonify({
+            'status': 'success',
+            'message': 'Location updated successfully',
+            'location': {
+                'city': reverse_geocoded.get('city'),
+                'country': reverse_geocoded.get('country'),
+                'region': reverse_geocoded.get('region'),
+                'latitude': latitude,
+                'longitude': longitude
+            }
+        }), 200
+    except Exception as e:
+        print(f"Error updating location from coordinates: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 @app.route('/debug/last-entry')
 def debug_last_entry():
     """Debug endpoint to view the last collected entry"""
