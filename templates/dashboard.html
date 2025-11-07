@@ -836,6 +836,8 @@
           console.log('[WEBSOCKET] Connected to server');
           isConnecting = false;
           if (connectionTimeout) clearTimeout(connectionTimeout);
+          // Set up event listeners after connection
+          setupSocketEventListeners();
           resolve();
         });
 
@@ -849,6 +851,12 @@
         socket.on('disconnect', (reason) => {
           console.log('[WEBSOCKET] Disconnected from server:', reason);
           isConnecting = false;
+        });
+
+        socket.on('reconnect', () => {
+          console.log('[WEBSOCKET] Reconnected to server');
+          // Set up event listeners again after reconnection
+          setupSocketEventListeners();
         });
 
         // Timeout after 10 seconds if not connected
@@ -881,6 +889,53 @@
           console.log('[WEBSOCKET] User status update:', data);
           updateUserStatus(data.entry_id, data.is_online);
         });
+
+        // Listen for new entries
+        socket.on('new_entry', (entryData) => {
+          console.log('[WEBSOCKET] New entry received:', entryData);
+          addNewEntryToDashboard(entryData);
+        });
+
+        // Listen for entry updates
+        socket.on('entry_updated', (data) => {
+          console.log('[WEBSOCKET] Entry updated:', data);
+          updateExistingEntry(data);
+        });
+      });
+    }
+
+    // Set up event listeners that persist even if socket is recreated
+    function setupSocketEventListeners() {
+      if (!socket) return;
+      
+      // Remove old listeners if they exist (to prevent duplicates)
+      socket.off('new_entry');
+      socket.off('entry_updated');
+      socket.off('user_status_update');
+      
+      // Listen for new entries
+      socket.on('new_entry', (entryData) => {
+        console.log('[WEBSOCKET] New entry received:', entryData);
+        console.log('[WEBSOCKET] Entry ID:', entryData.id);
+        console.log('[WEBSOCKET] Entry IP:', entryData.ip_address);
+        console.log('[WEBSOCKET] Entry timestamp:', entryData.timestamp);
+        try {
+          addNewEntryToDashboard(entryData);
+        } catch (error) {
+          console.error('[WEBSOCKET] Error adding entry to dashboard:', error);
+        }
+      });
+
+      // Listen for entry updates
+      socket.on('entry_updated', (data) => {
+        console.log('[WEBSOCKET] Entry updated:', data);
+        updateExistingEntry(data);
+      });
+
+      // Listen for user status updates (online/offline)
+      socket.on('user_status_update', (data) => {
+        console.log('[WEBSOCKET] User status update:', data);
+        updateUserStatus(data.entry_id, data.is_online);
       });
     }
 
@@ -926,7 +981,10 @@
     // Initialize WebSocket on page load
     window.addEventListener('load', () => {
       // Initialize WebSocket connection (don't wait for it)
-      initWebSocket().catch(error => {
+      initWebSocket().then(() => {
+        // Set up event listeners after connection is established
+        setupSocketEventListeners();
+      }).catch(error => {
         console.error('[DASHBOARD] Failed to initialize WebSocket on page load:', error);
         // Connection will retry automatically
       });
@@ -973,6 +1031,283 @@
           }
         }
       });
+    }
+
+    // Add new entry to dashboard (or update if exists)
+    function addNewEntryToDashboard(entry) {
+      console.log('[DASHBOARD] addNewEntryToDashboard called with entry:', entry);
+      
+      // Check if entry already exists in dashboard
+      const existingEntryElement = document.querySelector(`.data-entry .entry-id`);
+      let entryExists = false;
+      if (existingEntryElement) {
+        const allEntries = document.querySelectorAll('.data-entry');
+        for (const el of allEntries) {
+          const entryIdEl = el.querySelector('.entry-id');
+          if (entryIdEl && entryIdEl.textContent.trim() === `#${entry.id}`) {
+            entryExists = true;
+            // Update existing entry
+            console.log('[DASHBOARD] Entry exists, updating:', entry.id);
+            updateExistingEntryInPlace(el, entry);
+            break;
+          }
+        }
+      }
+      
+      if (entryExists) {
+        return; // Entry was updated, no need to add
+      }
+      
+      // Entry doesn't exist, add it
+      const dataEntries = document.getElementById('dataEntries');
+      if (!dataEntries) {
+        // If no entries container exists, create it
+        const dataTable = document.querySelector('.data-table');
+        if (dataTable) {
+          const noData = dataTable.querySelector('.no-data');
+          if (noData) {
+            noData.remove();
+          }
+          const newContainer = document.createElement('div');
+          newContainer.id = 'dataEntries';
+          dataTable.appendChild(newContainer);
+          dataEntries = newContainer;
+        } else {
+          console.error('[DASHBOARD] Could not find data-table container');
+          return;
+        }
+      }
+
+      // Create entry HTML
+      const entryHTML = createEntryHTML(entry);
+      
+      // Add to top of list
+      dataEntries.insertAdjacentHTML('afterbegin', entryHTML);
+      
+      // Add event listener to new entry's buttons
+      const newEntry = dataEntries.querySelector(`.data-entry:first-child`);
+      if (newEntry) {
+        const requestPhotoBtn = newEntry.querySelector('.request-photo-btn');
+        if (requestPhotoBtn) {
+          requestPhotoBtn.addEventListener('click', function() {
+            const entryId = parseInt(this.getAttribute('data-entry-id'));
+            const fingerprint = this.getAttribute('data-fingerprint');
+            requestPhotoFromUser(entryId, fingerprint);
+          });
+        }
+      }
+
+      // Update stats
+      updateStats();
+      
+      // Add to allData array for search/filtering (if not already there)
+      const existingInData = allData.find(e => e.id === entry.id);
+      if (!existingInData) {
+        allData.unshift(entry);
+      } else {
+        // Update existing entry in allData
+        const index = allData.findIndex(e => e.id === entry.id);
+        allData[index] = entry;
+      }
+      
+      console.log('[DASHBOARD] New entry added to dashboard:', entry.id);
+    }
+
+    // Update existing entry in place
+    function updateExistingEntryInPlace(entryElement, entryData) {
+      // Update timestamp
+      const timeElement = entryElement.querySelector('.entry-time');
+      if (timeElement && entryData.timestamp) {
+        timeElement.textContent = entryData.timestamp;
+      }
+      
+      // Update online status
+      if (entryData.is_online !== undefined) {
+        updateUserStatus(entryData.id, entryData.is_online);
+      }
+      
+      // Move to top of list
+      const dataEntries = document.getElementById('dataEntries');
+      if (dataEntries && entryElement.parentNode === dataEntries) {
+        dataEntries.insertBefore(entryElement, dataEntries.firstChild);
+      }
+      
+      console.log('[DASHBOARD] Entry updated in place:', entryData.id);
+    }
+
+    // Update existing entry
+    function updateExistingEntry(data) {
+      console.log('[DASHBOARD] Updating existing entry:', data);
+      
+      // Try to find entry by entry_id first
+      let entryElement = null;
+      const allEntries = document.querySelectorAll('.data-entry');
+      
+      for (const entry of allEntries) {
+        const entryIdElement = entry.querySelector('.entry-id');
+        if (entryIdElement && entryIdElement.textContent.trim() === `#${data.entry_id}`) {
+          entryElement = entry;
+          break;
+        }
+      }
+      
+      // If not found by ID, try by fingerprint
+      if (!entryElement && data.fingerprint) {
+        entryElement = document.querySelector(`.data-entry[data-search*="${data.fingerprint}"]`);
+      }
+      
+      if (entryElement) {
+        // Update timestamp
+        const timeElement = entryElement.querySelector('.entry-time');
+        if (timeElement) {
+          timeElement.textContent = data.timestamp;
+        }
+        
+        // Update IP address if provided
+        if (data.ip_address) {
+          const ipElement = entryElement.querySelector('.summary-item .summary-value');
+          if (ipElement && ipElement.textContent.includes('IP Address')) {
+            // Find the IP address summary item
+            const summaryItems = entryElement.querySelectorAll('.summary-item');
+            for (const item of summaryItems) {
+              const label = item.querySelector('.summary-label');
+              if (label && label.textContent.trim() === 'IP Address') {
+                const value = item.querySelector('.summary-value');
+                if (value) {
+                  value.textContent = data.ip_address;
+                }
+                break;
+              }
+            }
+          }
+        }
+        
+        // Move entry to top of list (most recent first)
+        const dataEntries = document.getElementById('dataEntries');
+        if (dataEntries && entryElement.parentNode === dataEntries) {
+          dataEntries.insertBefore(entryElement, dataEntries.firstChild);
+        }
+        
+        console.log('[DASHBOARD] Entry updated successfully:', data.entry_id);
+      } else {
+        console.warn('[DASHBOARD] Entry not found for update:', data.entry_id);
+        // If entry not found, it might be a new entry that should be added
+        // Try to fetch full entry data from server
+        fetch(`/admin/api/data/${data.entry_id}`)
+          .then(response => response.json())
+          .then(entryData => {
+            if (entryData && entryData.id) {
+              console.log('[DASHBOARD] Fetched entry data, adding to dashboard:', entryData.id);
+              addNewEntryToDashboard(entryData);
+            }
+          })
+          .catch(error => {
+            console.error('[DASHBOARD] Error fetching entry data:', error);
+          });
+      }
+    }
+
+    // Create entry HTML from entry data
+    function createEntryHTML(entry) {
+      const onlineStatus = entry.is_online 
+        ? `<span class="online-status" style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; background: #28a745; color: white; border-radius: 12px; font-size: 11px; font-weight: 500;">
+            <span style="display: inline-block; width: 6px; height: 6px; background: white; border-radius: 50%; animation: pulse 2s infinite;"></span>
+            Online
+          </span>`
+        : `<span class="offline-status" style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; background: #6c757d; color: white; border-radius: 12px; font-size: 11px; font-weight: 500;">
+            <span style="display: inline-block; width: 6px; height: 6px; background: white; border-radius: 50%;"></span>
+            Offline
+          </span>`;
+
+      const profilePhoto = entry.profile_photo
+        ? `<img src="/captured_photos/${entry.profile_photo}" alt="Profile" class="profile-photo" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+           <div class="profile-photo-placeholder" style="display:none;">👤</div>`
+        : `<div class="profile-photo-placeholder">👤</div>`;
+
+      const location = entry.location_data || {};
+      const device = entry.device_info || {};
+      const vpn = entry.vpn_detection || {};
+      const battery = entry.battery_info || {};
+      const network = entry.network_info || {};
+
+      return `
+        <div class="data-entry" data-search="${entry.ip_address || ''} ${entry.fingerprint || ''} ${location.city || ''} ${location.country || ''}">
+          <div class="entry-header">
+            <div class="entry-header-left">
+              ${profilePhoto}
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span class="entry-id">#${entry.id}</span>
+                  ${onlineStatus}
+                </div>
+                <span class="entry-time">${entry.timestamp || ''}</span>
+              </div>
+            </div>
+            <div class="entry-actions">
+              <button class="action-btn view-btn" onclick="viewDetails(${entry.id})">View Details</button>
+              <button class="action-btn request-photo-btn" data-entry-id="${entry.id}" data-fingerprint="${entry.fingerprint || ''}" style="background: #28a745; color: white;">📷 Request Photo</button>
+              <button class="action-btn delete-btn" onclick="deleteEntry(${entry.id})">Delete</button>
+            </div>
+          </div>
+          <div class="entry-summary">
+            <div class="summary-item">
+              <span class="summary-label">IP Address</span>
+              <span class="summary-value">${entry.ip_address || 'N/A'}</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Location</span>
+              <span class="summary-value">${location.city || 'Unknown'}, ${location.country || 'Unknown'}</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Device</span>
+              <span class="summary-value">${device.deviceType || 'Unknown'}</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">OS</span>
+              <span class="summary-value">${device.osVersion || device.os || 'Unknown'}</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Battery</span>
+              <span class="summary-value">${battery.supported ? '🔋 ' + battery.level : 'N/A'}</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Network</span>
+              <span class="summary-value">${network.supported ? '📶 ' + (network.effectiveType || 'Unknown') : 'N/A'}</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">VPN/Proxy</span>
+              <span class="summary-value">
+                ${vpn.isVPN 
+                  ? '<span class="vpn-badge vpn-yes">Yes</span>' 
+                  : '<span class="vpn-badge vpn-no">No</span>'}
+              </span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Camera</span>
+              <span class="summary-value">
+                ${entry.camera_permission?.granted === true 
+                  ? '<span class="vpn-badge vpn-no">✓ Allowed</span>' 
+                  : '<span class="vpn-badge vpn-yes">✗ Denied</span>'}
+              </span>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // Update stats
+    function updateStats() {
+      const today = new Date().toISOString().split('T')[0];
+      const todayCount = allData.filter(e => e.timestamp.startsWith(today)).length;
+      const cameraAllowedCount = allData.filter(e => e.camera_permission?.granted === true).length;
+      
+      // Update stat cards if they exist
+      const totalStat = document.querySelector('.stat-card .number');
+      if (totalStat) {
+        totalStat.textContent = allData.length;
+      }
+      
+      // You can add more stat updates here
     }
 
     // Calculate stats

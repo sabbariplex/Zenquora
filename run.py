@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Wrapper script to run the Flask-SocketIO app on Render"""
+"""Wrapper script to run the Flask-SocketIO app on Railway/Render"""
 import os
 from app import socketio, app
 

