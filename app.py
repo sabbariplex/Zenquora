@@ -197,6 +197,48 @@ def health():
     """Health check endpoint for Railway"""
     return jsonify({'status': 'ok', 'service': 'running'}), 200
 
+@app.route('/test')
+def test():
+    """Simple test endpoint to verify Railway is working"""
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Railway Test</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                height: 100vh;
+                margin: 0;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            }
+            .container {
+                background: white;
+                padding: 40px;
+                border-radius: 10px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+                text-align: center;
+            }
+            h1 { color: #28a745; margin: 0 0 20px 0; }
+            p { color: #666; margin: 10px 0; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>✅ Railway is Working!</h1>
+            <p>If you can see this, Railway is serving your Flask app correctly.</p>
+            <p>Time: <span id="time"></span></p>
+            <script>
+                document.getElementById('time').textContent = new Date().toLocaleString();
+            </script>
+        </div>
+    </body>
+    </html>
+    """
+
 def get_client_ip():
     """Extract client IP from request, handling proxy headers correctly"""
     # Check X-Real-IP first (used by some proxies like Render)
