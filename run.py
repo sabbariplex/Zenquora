@@ -28,24 +28,16 @@ if __name__ == '__main__':
     print(f"[STARTUP] Starting server on 0.0.0.0:{port}")
     print(f"[STARTUP] Debug mode: {debug}")
     print(f"[STARTUP] Environment: {'development' if is_dev else 'production'}")
-    print(f"[STARTUP] PORT environment variable: {os.environ.get('PORT', 'NOT SET')}")
     print(f"[STARTUP] Application ready to accept connections")
 
     # Use SocketIO's built-in server (works with eventlet mode)
     # This is production-ready for Railway
-    try:
-        socketio.run(
-            app,
-            host='0.0.0.0',
-            port=port,
-            debug=debug,
-            log_output=True,  # Enable logging to help debug Railway issues
-            use_reloader=False,
-            allow_unsafe_werkzeug=True
-        )
-    except Exception as e:
-        print(f"[ERROR] Failed to start server: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+    socketio.run(
+        app,
+        host='0.0.0.0',
+        port=port,
+        debug=debug,
+        log_output=False,  # Disable to prevent false error logs
+        use_reloader=False
+    )
 
