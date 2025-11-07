@@ -340,8 +340,9 @@ def collect_data():
         
         # Normalize location data to ensure consistent field names
         # Handle different IP info provider formats
+        # Always ensure IP address is included (use ip_address from request if not in ip_info)
         normalized_location = {
-            'ip': ip_info.get('ip'),
+            'ip': ip_info.get('ip') or ip_address,  # Always include IP address
             'city': ip_info.get('city'),
             'region': ip_info.get('region'),
             'country': ip_info.get('country') or ip_info.get('country_name'),
@@ -381,6 +382,7 @@ def collect_data():
             # Use GPS-based location if available, otherwise fall back to IP-based
             location_data = json.dumps({
                 **normalized_location,  # Keep IP info for reference
+                'ip': normalized_location.get('ip') or ip_address,  # Ensure IP is always set
                 'gps': device_coords,
                 'latitude': gps_lat,
                 'longitude': gps_lon,
@@ -396,6 +398,7 @@ def collect_data():
             # Location permission denied - use IP-based location
             location_data = json.dumps({
                 **normalized_location,
+                'ip': normalized_location.get('ip') or ip_address,  # Ensure IP is always set
                 'location_type': 'ip'
             })
 
