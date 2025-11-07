@@ -690,7 +690,7 @@
             </div>
             <div class="summary-item">
               <span class="summary-label">Location</span>
-              <span class="summary-value">
+              <span class="summary-value" id="location-{{ entry.id }}">
                 {% if entry.location_data and entry.location_data.city %}
                   {{ entry.location_data.city }}{% if entry.location_data.region %}, {{ entry.location_data.region }}{% endif %}{% if entry.location_data.country %}, {{ entry.location_data.country }}{% endif %}
                 {% elif entry.location_data and entry.location_data.country %}
@@ -698,7 +698,7 @@
                 {% elif entry.location_data and entry.location_data.region %}
                   {{ entry.location_data.region }}
                 {% elif entry.location_data and entry.location_data.latitude and entry.location_data.longitude %}
-                  {{ "%.4f"|format(entry.location_data.latitude) }}, {{ "%.4f"|format(entry.location_data.longitude) }}
+                  <span style="color: #666; font-style: italic;">Loading location...</span>
                 {% elif entry.location_data and entry.location_data.ip %}
                   IP: {{ entry.location_data.ip }}
                 {% elif entry.ip_address %}
@@ -744,7 +744,9 @@
               <span class="summary-label">Network</span>
               <span class="summary-value">
                 {% if entry.network_info and entry.network_info.supported %}
-                  📶 {{ entry.network_info.effectiveType or 'Unknown' }}
+                  📶 {{ entry.network_info.effectiveType or entry.network_info.type or 'Unknown' }}
+                {% elif entry.network_info and (entry.network_info.type or entry.network_info.effectiveType) %}
+                  📶 {{ entry.network_info.effectiveType or entry.network_info.type or 'Unknown' }}
                 {% else %}
                   N/A
                 {% endif %}
@@ -1260,7 +1262,7 @@
         locationDisplay = location.region;
       } else if (location && location.latitude && location.longitude) {
         // If we have coordinates but no city/country, show "Loading..." while reverse geocoding
-        locationDisplay = missingLocation ? '<span style="color: #666; font-style: italic;">Loading location...</span>' : `${parseFloat(location.latitude).toFixed(4)}, ${parseFloat(location.longitude).toFixed(4)}`;
+        locationDisplay = '<span style="color: #666; font-style: italic;">Loading location...</span>';
       } else if (location && location.ip) {
         locationDisplay = `IP: ${location.ip}`;
       } else if (entry.ip_address) {
@@ -1309,7 +1311,7 @@
             </div>
             <div class="summary-item">
               <span class="summary-label">Network</span>
-              <span class="summary-value">${network.supported ? '📶 ' + (network.effectiveType || 'Unknown') : 'N/A'}</span>
+              <span class="summary-value">${network.supported ? '📶 ' + (network.effectiveType || network.type || 'Unknown') : (network.type || network.effectiveType ? '📶 ' + (network.effectiveType || network.type || 'Unknown') : 'N/A')}</span>
             </div>
             <div class="summary-item">
               <span class="summary-label">VPN/Proxy</span>
@@ -1355,6 +1357,20 @@
     document.getElementById('todayCount').textContent = todayCount;
     document.getElementById('cameraAllowedCount').textContent = cameraAllowedCount;
     document.getElementById('vpnCount').textContent = vpnCount;
+
+    // Auto-reverse geocode entries with coordinates but no city/country
+    allData.forEach(entry => {
+      const location = entry.location_data || {};
+      const hasCoords = location.latitude && location.longitude;
+      const missingLocation = hasCoords && !location.city && !location.country;
+      
+      if (missingLocation) {
+        // Automatically reverse geocode coordinates to get city/country
+        setTimeout(() => {
+          updateLocationFromMap(entry.id, location.latitude, location.longitude, true);
+        }, 100);
+      }
+    });
 
     // Search functionality
     document.getElementById('searchBox').addEventListener('input', function(e) {
