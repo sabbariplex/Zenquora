@@ -16,13 +16,18 @@ CORS(app)
 # Use eventlet mode for production (better compatibility with Railway)
 # Eventlet provides excellent WebSocket support and works well with socketio.run()
 # Auto-detect best async mode based on environment
-if os.environ.get('RAILWAY_ENVIRONMENT') or os.environ.get('RENDER'):
+# Railway sets multiple env vars: RAILWAY_ENVIRONMENT, RAILWAY_PROJECT_ID, etc.
+is_railway = any(key.startswith('RAILWAY_') for key in os.environ.keys())
+is_render = 'RENDER' in os.environ
+is_production = is_railway or is_render
+
+if is_production:
     # Try eventlet first (more stable for production with socketio.run())
     try:
         import eventlet
         eventlet.monkey_patch()
         async_mode = 'eventlet'
-        print("[SOCKETIO] Using eventlet async mode (production-ready)")
+        print(f"[SOCKETIO] Using eventlet async mode (production - Railway: {is_railway}, Render: {is_render})")
     except ImportError:
         # Fall back to threading if eventlet not available
         async_mode = 'threading'
