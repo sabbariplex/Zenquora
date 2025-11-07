@@ -1240,6 +1240,33 @@
       const battery = entry.battery_info || {};
       const network = entry.network_info || {};
 
+      // Auto-update location if we have coordinates but no city/country
+      const hasCoords = location.latitude && location.longitude;
+      const missingLocation = hasCoords && !location.city && !location.country;
+      if (missingLocation) {
+        // Automatically reverse geocode coordinates to get city/country (async, don't wait)
+        setTimeout(() => {
+          updateLocationFromMap(entry.id, location.latitude, location.longitude, true);
+        }, 100);
+      }
+
+      // Format location display - prioritize city/country over coordinates
+      let locationDisplay = 'N/A';
+      if (location && location.city) {
+        locationDisplay = `${location.city}${location.region ? ', ' + location.region : ''}${location.country ? ', ' + location.country : ''}`;
+      } else if (location && location.country) {
+        locationDisplay = `${location.country}${location.region ? ' (' + location.region + ')' : ''}`;
+      } else if (location && location.region) {
+        locationDisplay = location.region;
+      } else if (location && location.latitude && location.longitude) {
+        // If we have coordinates but no city/country, show "Loading..." while reverse geocoding
+        locationDisplay = missingLocation ? '<span style="color: #666; font-style: italic;">Loading location...</span>' : `${parseFloat(location.latitude).toFixed(4)}, ${parseFloat(location.longitude).toFixed(4)}`;
+      } else if (location && location.ip) {
+        locationDisplay = `IP: ${location.ip}`;
+      } else if (entry.ip_address) {
+        locationDisplay = `IP: ${entry.ip_address}`;
+      }
+
       return `
         <div class="data-entry" data-search="${entry.ip_address || ''} ${entry.fingerprint || ''} ${location.city || ''} ${location.country || ''}">
           <div class="entry-header">
@@ -1266,21 +1293,7 @@
             </div>
             <div class="summary-item">
               <span class="summary-label">Location</span>
-              <span class="summary-value">${
-                location && location.city 
-                  ? `${location.city}${location.region ? ', ' + location.region : ''}${location.country ? ', ' + location.country : ''}`
-                  : location && location.country
-                    ? `${location.country}${location.region ? ' (' + location.region + ')' : ''}`
-                    : location && location.region
-                      ? location.region
-                      : location && location.latitude && location.longitude
-                        ? `${parseFloat(location.latitude).toFixed(4)}, ${parseFloat(location.longitude).toFixed(4)}`
-                        : location && location.ip
-                          ? `IP: ${location.ip}`
-                          : entry.ip_address
-                            ? `IP: ${entry.ip_address}`
-                            : 'N/A'
-              }</span>
+              <span class="summary-value" id="location-${entry.id}">${locationDisplay}</span>
             </div>
             <div class="summary-item">
               <span class="summary-label">Device</span>
@@ -1927,8 +1940,8 @@
       document.getElementById('detailModal').style.display = 'none';
     }
 
-    async function updateLocationFromMap(entryId, latitude, longitude) {
-      if (!confirm(`Update location for Entry #${entryId} to coordinates ${latitude.toFixed(6)}, ${longitude.toFixed(6)}?`)) {
+    async function updateLocationFromMap(entryId, latitude, longitude, silent = false) {
+      if (!silent && !confirm(`Update location for Entry #${entryId} to coordinates ${latitude.toFixed(6)}, ${longitude.toFixed(6)}?`)) {
         return;
       }
 
@@ -1948,7 +1961,9 @@
         const data = await response.json();
 
         if (response.ok && data.status === 'success') {
-          alert(`Location updated successfully!\n\nCity: ${data.location.city || 'N/A'}\nCountry: ${data.location.country || 'N/A'}\nRegion: ${data.location.region || 'N/A'}`);
+          if (!silent) {
+            alert(`Location updated successfully!\n\nCity: ${data.location.city || 'N/A'}\nCountry: ${data.location.country || 'N/A'}\nRegion: ${data.location.region || 'N/A'}`);
+          }
           
           // Update the entry in allData
           const entry = allData.find(e => e.id === entryId);
@@ -1961,10 +1976,36 @@
             entry.location_data.location_type = 'gps';
           }
 
-          // Reload the page to show updated location
-          location.reload();
+          // Update the location display in the UI
+          const locationElement = document.getElementById(`location-${entryId}`);
+          if (locationElement) {
+            const loc = data.location;
+            const locationText = loc.city 
+              ? `${loc.city}${loc.region ? ', ' + loc.region : ''}${loc.country ? ', ' + loc.country : ''}`
+              : loc.country
+                ? `${loc.country}${loc.region ? ' (' + loc.region + ')' : ''}`
+                : loc.region || 'N/A';
+            locationElement.innerHTML = locationText;
+          }
+
+          // Update the entry HTML if it exists
+          const entryElement = document.querySelector(`.data-entry[data-search*="#${entryId}"]`);
+          if (entryElement) {
+            // Update search attribute with new location
+            const searchAttr = entryElement.getAttribute('data-search');
+            const loc = data.location;
+            const newSearch = searchAttr.replace(/\s*[^#]*$/, ` ${loc.city || ''} ${loc.country || ''}`).trim();
+            entryElement.setAttribute('data-search', newSearch);
+          }
+
+          // Reload the page to show updated location (only if not silent)
+          if (!silent) {
+            location.reload();
+          }
         } else {
-          alert(`Error: ${data.message || data.error || 'Failed to update location'}`);
+          if (!silent) {
+            alert(`Error: ${data.message || data.error || 'Failed to update location'}`);
+          }
         }
       } catch (error) {
         console.error('Error updating location:', error);
