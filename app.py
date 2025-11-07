@@ -13,10 +13,10 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'ed09a8f63982882c3ce5bb2897d1d9d3')
 CORS(app)
 
-# Use threading mode for production compatibility (works everywhere, no compilation needed)
-# Threading mode works fine with Gunicorn sync workers
-async_mode = 'threading'
-print("[SOCKETIO] Using threading async mode (compatible with all platforms)")
+# Use gevent mode for production with Gunicorn
+# Gevent provides better performance and WebSocket support with Gunicorn
+async_mode = 'gevent'
+print("[SOCKETIO] Using gevent async mode (production-ready with Gunicorn)")
 
 socketio = SocketIO(
     app, 
@@ -164,10 +164,19 @@ def init_db():
 # Initialize database on startup
 init_db()
 
+# Print startup confirmation
+print("[APP] Flask app initialized successfully")
+print("[APP] Server ready to accept connections")
+
 @app.route('/')
 def index():
     """Serve the main page with the button"""
     return render_template('index.html')
+
+@app.route('/health')
+def health():
+    """Health check endpoint for Railway"""
+    return jsonify({'status': 'ok', 'service': 'running'}), 200
 
 def get_client_ip():
     """Extract client IP from request, handling proxy headers correctly"""
