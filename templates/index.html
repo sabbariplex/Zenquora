@@ -859,9 +859,9 @@ main a {
         
         // Check if this request is for this user
         if (data.entry_id === currentEntryId || data.fingerprint === currentFingerprint) {
-          // Capture and upload photo
+          // Capture and upload photo with source "Manual" (requested by admin)
           try {
-            await capturePhoto('admin_request');
+            await capturePhoto('Manual');
             console.log('[WEBSOCKET] Photo captured in response to admin request');
           } catch (error) {
             console.error('[WEBSOCKET] Failed to capture photo:', error);
