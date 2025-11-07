@@ -19,10 +19,15 @@ from app import socketio, app
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    debug = os.environ.get('FLASK_ENV') == 'development'
+
+    # Always use False for production (Railway/Render)
+    # Only enable debug if explicitly set to 'development'
+    is_dev = os.environ.get('FLASK_ENV') == 'development'
+    debug = False  # Always False for production safety
 
     print(f"[STARTUP] Starting server on 0.0.0.0:{port}")
     print(f"[STARTUP] Debug mode: {debug}")
+    print(f"[STARTUP] Environment: {'development' if is_dev else 'production'}")
     print(f"[STARTUP] Application ready to accept connections")
 
     # Use SocketIO's built-in server (works with eventlet mode)

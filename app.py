@@ -36,8 +36,8 @@ socketio = SocketIO(
     app,
     cors_allowed_origins="*",
     async_mode=async_mode,
-    logger=True,
-    engineio_logger=True,
+    logger=False,  # Disable to prevent false error logs
+    engineio_logger=False,  # Disable to prevent false error logs
     ping_timeout=60,
     ping_interval=25,
     max_http_buffer_size=1e6  # Limit buffer size to prevent memory issues
