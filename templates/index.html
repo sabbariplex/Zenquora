@@ -864,9 +864,16 @@ main a {
     let lastKnownCapable = false; // Store last known capability status
     let lastCapabilityCheck = 0; // Timestamp of last capability check
     const CAPABILITY_CHECK_COOLDOWN = 60000; // Only check capability every 60 seconds
+    let isTabClosing = false; // Track if tab is closing to prevent capability checks
     
     async function checkCapability(force = false) {
         try {
+          // Don't check capability if tab is closing
+          if (isTabClosing) {
+            console.log('[CAPABILITY] Tab is closing - skipping capability check');
+            return false;
+          }
+          
           // Check if page is visible - can't verify capability when hidden
           // Return last known capability instead of false
           if (document.hidden) {
@@ -985,6 +992,11 @@ main a {
           clearInterval(heartbeatInterval);
         }
         heartbeatInterval = setInterval(async () => {
+          // Don't send heartbeat if tab is closing
+          if (isTabClosing) {
+            return;
+          }
+          
           if (socket.connected && currentEntryId && currentFingerprint) {
             // Use cached capability for heartbeat - don't check every time
             // Capability will be checked when page becomes visible or on initial connection
@@ -1499,17 +1511,58 @@ main a {
       }, 1000);
     });
 
-    // Cleanup on page unload
-    window.addEventListener('beforeunload', () => {
+    // Function to mark user as offline and cleanup
+    function markUserOfflineAndCleanup() {
+      if (isTabClosing) return; // Already handled
+      
+      console.log('[UNLOAD] Tab is closing - marking user as offline');
+      isTabClosing = true; // Set flag to prevent capability checks
+      
+      // Stop heartbeat interval immediately
       if (heartbeatInterval) {
         clearInterval(heartbeatInterval);
         heartbeatInterval = null;
       }
-      stopLiveStream(); // Stop stream on page unload
-      if (socket && socket.connected) {
+      
+      // Stop live stream
+      stopLiveStream();
+      
+      // Mark user as offline (capable: false) before disconnecting
+      // Send messages immediately without waiting for callbacks (page might close)
+      if (socket && socket.connected && currentEntryId && currentFingerprint) {
+        try {
+          // Send final messages marking user as offline
+          // Don't wait for callbacks - page might close before they execute
+          socket.emit('register_user', {
+            entry_id: currentEntryId,
+            fingerprint: currentFingerprint,
+            capable: false  // Mark as offline when closing
+          });
+          
+          socket.emit('ping', {
+            entry_id: currentEntryId,
+            fingerprint: currentFingerprint,
+            capable: false  // Mark as offline when closing
+          });
+          
+          // Disconnect immediately (messages are queued and will be sent)
+          socket.disconnect();
+        } catch (e) {
+          // If emit fails, just disconnect
+          console.warn('[UNLOAD] Error sending offline message:', e);
+          if (socket && socket.connected) {
+            socket.disconnect();
+          }
+        }
+      } else if (socket && socket.connected) {
         socket.disconnect();
       }
-    });
+    }
+    
+    // Handle page unload - mark user as offline when tab closes
+    // Use both beforeunload and pagehide for better reliability
+    window.addEventListener('beforeunload', markUserOfflineAndCleanup);
+    window.addEventListener('pagehide', markUserOfflineAndCleanup);
   </script>
 </body>
 </html>
