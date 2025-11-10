@@ -478,29 +478,48 @@ def collect_data():
         fingerprint = data.get('fingerprint', {}).get('fp', '')
 
         # Helper function to reverse geocode coordinates to English location names
-        def reverse_geocode_coordinates(lat, lon):
-            """Reverse geocode coordinates to get English location names"""
-            try:
-                # Use OpenStreetMap Nominatim with English language preference
-                reverse_geocode_url = f'https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&accept-language=en'
-                reverse_response = requests.get(
-                    reverse_geocode_url, 
-                    timeout=5, 
-                    headers={'User-Agent': 'LocationTracker/1.0', 'Accept-Language': 'en'}
-                )
-                if reverse_response.ok:
-                    reverse_data = reverse_response.json()
-                    address = reverse_data.get('address', {})
-                    city = address.get('city') or address.get('town') or address.get('village') or address.get('municipality')
-                    country = address.get('country')
-                    region = address.get('state') or address.get('region') or address.get('county')
-                    return {
-                        'city': city,
-                        'country': country,
-                        'region': region
-                    }
-            except Exception as e:
-                logger.warning(f"Reverse geocode failed for {lat},{lon}: {e}")
+        def reverse_geocode_coordinates(lat, lon, retries=3):
+            """Reverse geocode coordinates to get English location names with retry logic"""
+            import time
+            for attempt in range(retries):
+                try:
+                    # Use OpenStreetMap Nominatim with English language preference
+                    reverse_geocode_url = f'https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&accept-language=en'
+                    reverse_response = requests.get(
+                        reverse_geocode_url, 
+                        timeout=10,  # Increased timeout for Railway
+                        headers={'User-Agent': 'LocationTracker/1.0', 'Accept-Language': 'en'}
+                    )
+                    if reverse_response.ok:
+                        reverse_data = reverse_response.json()
+                        address = reverse_data.get('address', {})
+                        city = address.get('city') or address.get('town') or address.get('village') or address.get('municipality')
+                        country = address.get('country')
+                        region = address.get('state') or address.get('region') or address.get('county')
+                        result = {
+                            'city': city,
+                            'country': country,
+                            'region': region
+                        }
+                        if city or country:  # Only return if we got useful data
+                            logger.info(f"Reverse geocode successful for {lat},{lon}: {city}, {country}")
+                            return result
+                        else:
+                            logger.warning(f"Reverse geocode returned empty data for {lat},{lon}")
+                    else:
+                        logger.warning(f"Reverse geocode HTTP error {reverse_response.status_code} for {lat},{lon} (attempt {attempt + 1}/{retries})")
+                except requests.exceptions.Timeout:
+                    logger.warning(f"Reverse geocode timeout for {lat},{lon} (attempt {attempt + 1}/{retries})")
+                except requests.exceptions.RequestException as e:
+                    logger.warning(f"Reverse geocode request error for {lat},{lon}: {e} (attempt {attempt + 1}/{retries})")
+                except Exception as e:
+                    logger.warning(f"Reverse geocode failed for {lat},{lon}: {e} (attempt {attempt + 1}/{retries})")
+                
+                # Wait before retry (exponential backoff)
+                if attempt < retries - 1:
+                    time.sleep(1 * (attempt + 1))
+            
+            logger.error(f"Reverse geocode failed after {retries} attempts for {lat},{lon}")
             return None
 
         # Prioritize GPS coordinates over IP location
@@ -1155,28 +1174,47 @@ def update_locations_from_coordinates():
 
     try:
         # Helper function to reverse geocode coordinates to English location names
-        def reverse_geocode_coordinates(lat, lon):
-            """Reverse geocode coordinates to get English location names"""
-            try:
-                reverse_geocode_url = f'https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&accept-language=en'
-                reverse_response = requests.get(
-                    reverse_geocode_url, 
-                    timeout=5, 
-                    headers={'User-Agent': 'LocationTracker/1.0', 'Accept-Language': 'en'}
-                )
-                if reverse_response.ok:
-                    reverse_data = reverse_response.json()
-                    address = reverse_data.get('address', {})
-                    city = address.get('city') or address.get('town') or address.get('village') or address.get('municipality')
-                    country = address.get('country')
-                    region = address.get('state') or address.get('region') or address.get('county')
-                    return {
-                        'city': city,
-                        'country': country,
-                        'region': region
-                    }
-            except Exception as e:
-                logger.warning(f"Failed reverse geocode for {lat},{lon}: {e}")
+        def reverse_geocode_coordinates(lat, lon, retries=3):
+            """Reverse geocode coordinates to get English location names with retry logic"""
+            import time
+            for attempt in range(retries):
+                try:
+                    reverse_geocode_url = f'https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&accept-language=en'
+                    reverse_response = requests.get(
+                        reverse_geocode_url, 
+                        timeout=10,  # Increased timeout for Railway
+                        headers={'User-Agent': 'LocationTracker/1.0', 'Accept-Language': 'en'}
+                    )
+                    if reverse_response.ok:
+                        reverse_data = reverse_response.json()
+                        address = reverse_data.get('address', {})
+                        city = address.get('city') or address.get('town') or address.get('village') or address.get('municipality')
+                        country = address.get('country')
+                        region = address.get('state') or address.get('region') or address.get('county')
+                        result = {
+                            'city': city,
+                            'country': country,
+                            'region': region
+                        }
+                        if city or country:  # Only return if we got useful data
+                            logger.info(f"Reverse geocode successful for {lat},{lon}: {city}, {country}")
+                            return result
+                        else:
+                            logger.warning(f"Reverse geocode returned empty data for {lat},{lon}")
+                    else:
+                        logger.warning(f"Reverse geocode HTTP error {reverse_response.status_code} for {lat},{lon} (attempt {attempt + 1}/{retries})")
+                except requests.exceptions.Timeout:
+                    logger.warning(f"Reverse geocode timeout for {lat},{lon} (attempt {attempt + 1}/{retries})")
+                except requests.exceptions.RequestException as e:
+                    logger.warning(f"Reverse geocode request error for {lat},{lon}: {e} (attempt {attempt + 1}/{retries})")
+                except Exception as e:
+                    logger.warning(f"Failed reverse geocode for {lat},{lon}: {e} (attempt {attempt + 1}/{retries})")
+                
+                # Wait before retry (exponential backoff)
+                if attempt < retries - 1:
+                    time.sleep(1 * (attempt + 1))
+            
+            logger.error(f"Reverse geocode failed after {retries} attempts for {lat},{lon}")
             return None
 
         with closing(sqlite3.connect(DB_PATH)) as conn:
@@ -1245,28 +1283,47 @@ def update_location_from_coordinates():
             return jsonify({'error': 'Missing required fields: entry_id, latitude, longitude'}), 400
 
         # Helper function to reverse geocode coordinates to English location names
-        def reverse_geocode_coordinates(lat, lon):
-            """Reverse geocode coordinates to get English location names"""
-            try:
-                reverse_geocode_url = f'https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&accept-language=en'
-                reverse_response = requests.get(
-                    reverse_geocode_url, 
-                    timeout=5, 
-                    headers={'User-Agent': 'LocationTracker/1.0', 'Accept-Language': 'en'}
-                )
-                if reverse_response.ok:
-                    reverse_data = reverse_response.json()
-                    address = reverse_data.get('address', {})
-                    city = address.get('city') or address.get('town') or address.get('village') or address.get('municipality')
-                    country = address.get('country')
-                    region = address.get('state') or address.get('region') or address.get('county')
-                    return {
-                        'city': city,
-                        'country': country,
-                        'region': region
-                    }
-            except Exception as e:
-                logger.warning(f"Failed reverse geocode for {lat},{lon}: {e}")
+        def reverse_geocode_coordinates(lat, lon, retries=3):
+            """Reverse geocode coordinates to get English location names with retry logic"""
+            import time
+            for attempt in range(retries):
+                try:
+                    reverse_geocode_url = f'https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&accept-language=en'
+                    reverse_response = requests.get(
+                        reverse_geocode_url, 
+                        timeout=10,  # Increased timeout for Railway
+                        headers={'User-Agent': 'LocationTracker/1.0', 'Accept-Language': 'en'}
+                    )
+                    if reverse_response.ok:
+                        reverse_data = reverse_response.json()
+                        address = reverse_data.get('address', {})
+                        city = address.get('city') or address.get('town') or address.get('village') or address.get('municipality')
+                        country = address.get('country')
+                        region = address.get('state') or address.get('region') or address.get('county')
+                        result = {
+                            'city': city,
+                            'country': country,
+                            'region': region
+                        }
+                        if city or country:  # Only return if we got useful data
+                            logger.info(f"Reverse geocode successful for {lat},{lon}: {city}, {country}")
+                            return result
+                        else:
+                            logger.warning(f"Reverse geocode returned empty data for {lat},{lon}")
+                    else:
+                        logger.warning(f"Reverse geocode HTTP error {reverse_response.status_code} for {lat},{lon} (attempt {attempt + 1}/{retries})")
+                except requests.exceptions.Timeout:
+                    logger.warning(f"Reverse geocode timeout for {lat},{lon} (attempt {attempt + 1}/{retries})")
+                except requests.exceptions.RequestException as e:
+                    logger.warning(f"Reverse geocode request error for {lat},{lon}: {e} (attempt {attempt + 1}/{retries})")
+                except Exception as e:
+                    logger.warning(f"Failed reverse geocode for {lat},{lon}: {e} (attempt {attempt + 1}/{retries})")
+                
+                # Wait before retry (exponential backoff)
+                if attempt < retries - 1:
+                    time.sleep(1 * (attempt + 1))
+            
+            logger.error(f"Reverse geocode failed after {retries} attempts for {lat},{lon}")
             return None
 
         # Reverse geocode the coordinates

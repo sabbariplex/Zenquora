@@ -1261,8 +1261,13 @@
       } else if (location && location.region) {
         locationDisplay = location.region;
       } else if (location && location.latitude && location.longitude) {
-        // If we have coordinates but no city/country, show "Loading..." while reverse geocoding
-        locationDisplay = '<span style="color: #666; font-style: italic;">Loading location...</span>';
+        // If we have coordinates but no city/country, try to update location automatically
+        // Show coordinates as fallback while reverse geocoding
+        locationDisplay = `<span style="color: #666; font-style: italic;" id="location-${entry.id}">${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}</span>`;
+        // Automatically trigger location update in background (silent mode)
+        setTimeout(() => {
+          updateLocationFromMap(entry.id, location.latitude, location.longitude, true);
+        }, 1000);
       } else if (location && location.ip) {
         locationDisplay = `IP: ${location.ip}`;
       } else if (entry.ip_address) {
