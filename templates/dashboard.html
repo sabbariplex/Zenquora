@@ -1479,6 +1479,18 @@
       const vpn = entry.vpn_detection || {};
       const battery = entry.battery_info || {};
       const network = entry.network_info || {};
+      
+      // Debug: Log location data to verify ASN, company, privacy fields are present
+      if (location.asn || location.company || location.privacy || location.hostname) {
+        console.log(`[DEBUG] Entry #${entry.id} - IP Info Data:`, {
+          asn: location.asn,
+          company: location.company,
+          privacy: location.privacy,
+          hostname: location.hostname,
+          postal: location.postal,
+          timezone: location.timezone
+        });
+      }
 
       // Auto-update location if we have coordinates but no city/country
       const hasCoords = location.latitude && location.longitude;
@@ -1724,8 +1736,153 @@
                   <span class="info-label">Organization</span>
                   <span class="info-value">${loc.org || 'N/A'}</span>
                 </div>
+                ${loc.hostname ? `
+                <div class="info-row">
+                  <span class="info-label">Hostname</span>
+                  <span class="info-value">${loc.hostname}</span>
+                </div>
+                ` : ''}
+                ${loc.postal ? `
+                <div class="info-row">
+                  <span class="info-label">Postal Code</span>
+                  <span class="info-value">${loc.postal}</span>
+                </div>
+                ` : ''}
+                ${loc.timezone ? `
+                <div class="info-row">
+                  <span class="info-label">Timezone</span>
+                  <span class="info-value">${loc.timezone}</span>
+                </div>
+                ` : ''}
               </div>
             </div>
+
+            <!-- IP Information Card (ASN, Company, Privacy) -->
+            ${loc.asn || loc.company || (loc.privacy && (loc.privacy.vpn || loc.privacy.proxy || loc.privacy.hosting || loc.privacy.tor || loc.privacy.relay || loc.privacy.residential_proxy)) ? `
+            <div class="info-card" style="grid-column: span 2;">
+              <div class="info-card-header">
+                <span class="info-card-icon">🔍</span>
+                <span class="info-card-title">IP Information</span>
+              </div>
+              <div class="info-card-body">
+                ${loc.asn ? `
+                <div style="border-bottom: 1px solid #e9ecef; padding-bottom: 10px; margin-bottom: 10px;">
+                  <div class="info-row" style="margin-bottom: 8px;">
+                    <span class="info-label" style="font-weight: 600; color: #495057; font-size: 14px;">ASN (Autonomous System Number)</span>
+                  </div>
+                  ${loc.asn.number ? `
+                  <div class="info-row" style="padding-left: 15px;">
+                    <span class="info-label">Number</span>
+                    <span class="info-value">${loc.asn.number}</span>
+                  </div>
+                  ` : ''}
+                  ${loc.asn.name ? `
+                  <div class="info-row" style="padding-left: 15px;">
+                    <span class="info-label">Name</span>
+                    <span class="info-value">${loc.asn.name}</span>
+                  </div>
+                  ` : ''}
+                  ${loc.asn.domain ? `
+                  <div class="info-row" style="padding-left: 15px;">
+                    <span class="info-label">Domain</span>
+                    <span class="info-value">${loc.asn.domain}</span>
+                  </div>
+                  ` : ''}
+                  ${loc.asn.type ? `
+                  <div class="info-row" style="padding-left: 15px;">
+                    <span class="info-label">Type</span>
+                    <span class="info-value">${loc.asn.type}</span>
+                  </div>
+                  ` : ''}
+                  ${loc.asn.route ? `
+                  <div class="info-row" style="padding-left: 15px;">
+                    <span class="info-label">Route</span>
+                    <span class="info-value">${loc.asn.route}</span>
+                  </div>
+                  ` : ''}
+                </div>
+                ` : ''}
+                ${loc.company ? `
+                <div style="border-bottom: 1px solid #e9ecef; padding-bottom: 10px; margin-bottom: 10px;">
+                  <div class="info-row" style="margin-bottom: 8px;">
+                    <span class="info-label" style="font-weight: 600; color: #495057; font-size: 14px;">Company</span>
+                  </div>
+                  ${loc.company.name ? `
+                  <div class="info-row" style="padding-left: 15px;">
+                    <span class="info-label">Name</span>
+                    <span class="info-value">${loc.company.name}</span>
+                  </div>
+                  ` : ''}
+                  ${loc.company.domain ? `
+                  <div class="info-row" style="padding-left: 15px;">
+                    <span class="info-label">Domain</span>
+                    <span class="info-value">${loc.company.domain}</span>
+                  </div>
+                  ` : ''}
+                  ${loc.company.type ? `
+                  <div class="info-row" style="padding-left: 15px;">
+                    <span class="info-label">Type</span>
+                    <span class="info-value">${loc.company.type}</span>
+                  </div>
+                  ` : ''}
+                </div>
+                ` : ''}
+                ${loc.privacy && (loc.privacy.vpn || loc.privacy.proxy || loc.privacy.hosting || loc.privacy.tor || loc.privacy.relay || loc.privacy.residential_proxy) ? `
+                <div>
+                  <div class="info-row" style="margin-bottom: 8px;">
+                    <span class="info-label" style="font-weight: 600; color: #495057; font-size: 14px;">Privacy Detection</span>
+                  </div>
+                  ${loc.privacy.vpn ? `
+                  <div class="info-row" style="padding-left: 15px;">
+                    <span class="info-label">VPN</span>
+                    <span class="info-value"><span class="info-badge badge-warning">⚠️ Detected</span></span>
+                  </div>
+                  ` : ''}
+                  ${loc.privacy.proxy ? `
+                  <div class="info-row" style="padding-left: 15px;">
+                    <span class="info-label">Proxy</span>
+                    <span class="info-value"><span class="info-badge badge-warning">⚠️ Detected</span></span>
+                  </div>
+                  ` : ''}
+                  ${loc.privacy.hosting ? `
+                  <div class="info-row" style="padding-left: 15px;">
+                    <span class="info-label">Hosting</span>
+                    <span class="info-value"><span class="info-badge badge-info">☁️ Detected</span></span>
+                  </div>
+                  ` : ''}
+                  ${loc.privacy.tor ? `
+                  <div class="info-row" style="padding-left: 15px;">
+                    <span class="info-label">Tor</span>
+                    <span class="info-value"><span class="info-badge badge-danger">🔒 Detected</span></span>
+                  </div>
+                  ` : ''}
+                  ${loc.privacy.relay ? `
+                  <div class="info-row" style="padding-left: 15px;">
+                    <span class="info-label">Relay</span>
+                    <span class="info-value"><span class="info-badge badge-warning">⚠️ Detected</span></span>
+                  </div>
+                  ` : ''}
+                  ${loc.privacy.residential_proxy ? `
+                  <div class="info-row" style="padding-left: 15px;">
+                    <span class="info-label">Residential Proxy</span>
+                    <span class="info-value"><span class="info-badge badge-warning">⚠️ Detected</span></span>
+                  </div>
+                  ` : ''}
+                </div>
+                ` : loc.privacy ? `
+                <div>
+                  <div class="info-row" style="margin-bottom: 8px;">
+                    <span class="info-label" style="font-weight: 600; color: #495057; font-size: 14px;">Privacy Detection</span>
+                  </div>
+                  <div class="info-row" style="padding-left: 15px;">
+                    <span class="info-label">Status</span>
+                    <span class="info-value"><span class="info-badge badge-success">✓ Clean</span></span>
+                  </div>
+                </div>
+                ` : ''}
+              </div>
+            </div>
+            ` : ''}
 
             <!-- Location Card -->
             <div class="info-card" style="grid-column: span 2;">
