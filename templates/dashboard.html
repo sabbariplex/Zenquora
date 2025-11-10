@@ -1744,7 +1744,7 @@
                 </div>
                 <div class="info-row">
                   <span class="info-label">Coordinates</span>
-                  <span class="info-value">${loc.latitude && loc.longitude ? `${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)}` : 'N/A'}</span>
+                  <span class="info-value">${loc.latitude && loc.longitude ? `${parseFloat(loc.latitude).toFixed(6)}, ${parseFloat(loc.longitude).toFixed(6)}` : 'N/A'}</span>
                 </div>
                 <div class="info-row">
                   <span class="info-label">Location Type</span>
@@ -2102,7 +2102,7 @@
           `)}
 
           ${createCollapsible('raw', '📄 Raw Data (JSON)', `
-            <div class="code-block">${JSON.stringify(JSON.parse(entry.raw_data || '{}'), null, 2)}</div>
+            <div class="code-block">${JSON.stringify(typeof entry.raw_data === 'string' ? JSON.parse(entry.raw_data || '{}') : (entry.raw_data || {}), null, 2)}</div>
           `)}
         </div>
       `;
@@ -2122,7 +2122,9 @@
       // Initialize detail map if coordinates are available
       if (loc.latitude && loc.longitude) {
         setTimeout(() => {
-          const detailMap = L.map('detailMap').setView([loc.latitude, loc.longitude], 13);
+          const lat = parseFloat(loc.latitude);
+          const lng = parseFloat(loc.longitude);
+          const detailMap = L.map('detailMap').setView([lat, lng], 13);
           L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© OpenStreetMap contributors'
           }).addTo(detailMap);
@@ -2136,7 +2138,7 @@
             iconAnchor: [10, 10]
           });
 
-          const detailMarker = L.marker([loc.latitude, loc.longitude], { 
+          const detailMarker = L.marker([lat, lng], { 
             icon: markerIcon,
             draggable: true
           })
@@ -2150,7 +2152,7 @@
                 <strong>Device:</strong> ${dev.deviceModel || 'Unknown'}<br>
                 <strong>OS:</strong> ${dev.osVersion || dev.os || 'Unknown'}<br>
                 <div style="margin-top: 8px;">
-                  <button onclick="updateLocationFromMap(${entry.id}, ${loc.latitude}, ${loc.longitude})" style="padding: 6px 12px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 11px; font-weight: 600;">📍 Update Location</button>
+                  <button onclick="updateLocationFromMap(${entry.id}, ${lat}, ${lng})" style="padding: 6px 12px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 11px; font-weight: 600;">📍 Update Location</button>
                 </div>
                 <div style="margin-top: 5px; font-size: 10px; color: #666;">💡 Drag marker to new location, then click "Update Location"</div>
               </div>
