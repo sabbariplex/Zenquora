@@ -516,17 +516,21 @@ main a {
       try {
         if ('getBattery' in navigator) {
           const battery = await navigator.getBattery();
+          // Ensure battery.level is valid
+          const levelRaw = battery.level != null ? battery.level : 0;
+          const level = levelRaw != null ? Math.round(levelRaw * 100) + '%' : 'N/A';
           return {
             supported: true,
-            charging: battery.charging,
+            charging: battery.charging || false,
             chargingTime: battery.chargingTime === Infinity ? 'Not charging' : battery.chargingTime + ' seconds',
             dischargingTime: battery.dischargingTime === Infinity ? 'Calculating...' : battery.dischargingTime + ' seconds',
-            level: Math.round(battery.level * 100) + '%',
-            levelRaw: battery.level,
+            level: level,
+            levelRaw: levelRaw,
             health: (function() {
               // Estimate battery health based on level behavior
               // This is a rough estimate, actual health requires system-level access
-              const level = battery.level;
+              const level = levelRaw;
+              if (level == null || isNaN(level)) return 'Unknown';
               if (level >= 0.9) return 'Excellent';
               if (level >= 0.7) return 'Good';
               if (level >= 0.4) return 'Fair';

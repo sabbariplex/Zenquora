@@ -423,6 +423,23 @@ def get_ip_info():
                         data['provider'] = provider_name
                         data['client_ip_from_request'] = client_ip
                         
+                        # Ensure Provider and Organization are properly extracted
+                        # Different APIs use different field names
+                        if provider_name == 'ipapi.co':
+                            # ipapi.co uses 'org' for organization and 'asn' for ASN
+                            data['org'] = data.get('org') or (data.get('asn', {}).get('org') if isinstance(data.get('asn'), dict) else None) or data.get('isp', 'N/A')
+                            data['isp'] = data.get('org') or data.get('isp', 'N/A')
+                        elif provider_name == 'ipinfo.io':
+                            # ipinfo.io uses 'org' for organization
+                            data['org'] = data.get('org') or data.get('isp', 'N/A')
+                            data['isp'] = data.get('org') or data.get('isp', 'N/A')
+                        
+                        # Ensure both fields exist even if API doesn't provide them
+                        if 'org' not in data or not data['org']:
+                            data['org'] = data.get('isp') or 'N/A'
+                        if 'isp' not in data:
+                            data['isp'] = data.get('org') or 'N/A'
+                        
                         # Cache the result
                         ip_info_cache[client_ip] = (data, current_time)
                         
@@ -447,6 +464,8 @@ def get_ip_info():
         fallback_data = {
             'ip': client_ip, 
             'provider': 'fallback', 
+            'org': 'N/A',  # Add org field
+            'isp': 'N/A',  # Add isp field
             'note': 'Limited info - IP from request headers (remote user IP)',
             'client_ip_from_request': client_ip,
             'warning': 'Could not fetch location data for this IP'

@@ -734,7 +734,7 @@
             <div class="summary-item">
               <span class="summary-label">Battery</span>
               <span class="summary-value">
-                {% if entry.battery_info and entry.battery_info.supported %}
+                {% if entry.battery_info and entry.battery_info.supported and entry.battery_info.level %}
                   🔋 {{ entry.battery_info.level }}
                 {% else %}
                   N/A
@@ -1551,7 +1551,7 @@
             </div>
             <div class="summary-item">
               <span class="summary-label">Battery</span>
-              <span class="summary-value">${battery.supported ? '🔋 ' + battery.level : 'N/A'}</span>
+              <span class="summary-value">${battery.supported && battery.level ? '🔋 ' + battery.level : 'N/A'}</span>
             </div>
             <div class="summary-item">
               <span class="summary-label">Network</span>
@@ -1799,9 +1799,9 @@
                   <span class="info-label">Level</span>
                   <span class="info-value">
                     <strong style="color: ${
-                      entry.battery_info.levelRaw >= 0.7 ? '#28a745' :
-                      entry.battery_info.levelRaw >= 0.4 ? '#ffc107' : '#dc3545'
-                    };">${entry.battery_info.level}</strong>
+                      entry.battery_info.levelRaw != null && entry.battery_info.levelRaw >= 0.7 ? '#28a745' :
+                      entry.battery_info.levelRaw != null && entry.battery_info.levelRaw >= 0.4 ? '#ffc107' : '#dc3545'
+                    };">${entry.battery_info.level || 'N/A'}</strong>
                   </span>
                 </div>
                 <div class="info-row">
