@@ -14,10 +14,16 @@ logging.basicConfig(
 )
 
 # Suppress eventlet/werkzeug/socketio false error logs
-logging.getLogger('eventlet.wsgi.server').setLevel(logging.WARNING)
-logging.getLogger('werkzeug').setLevel(logging.INFO)
+# Set to ERROR to completely suppress informational messages that Railway interprets as errors
+logging.getLogger('eventlet.wsgi.server').setLevel(logging.ERROR)
+logging.getLogger('eventlet').setLevel(logging.ERROR)
+logging.getLogger('werkzeug').setLevel(logging.ERROR)  # Suppress HTTP access logs
 logging.getLogger('socketio').setLevel(logging.WARNING)
 logging.getLogger('engineio').setLevel(logging.WARNING)
+
+# Suppress eventlet's direct stderr output by setting environment variable
+# This prevents eventlet from writing "(1) wsgi starting up" and "(1) accepted" messages
+os.environ['EVENTLET_WSGI_LOG'] = '0'
 
 # Ensure we flush output immediately
 sys.stdout.flush()
@@ -76,7 +82,7 @@ if __name__ == '__main__':
             host='0.0.0.0',
             port=port,
             debug=debug,
-            log_output=True,  # Enable logging to help debug Railway issues
+            log_output=False,  # Disable to prevent false error logs in Railway
             use_reloader=False,
             allow_unsafe_werkzeug=True
         )

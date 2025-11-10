@@ -24,6 +24,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Suppress false error logs from eventlet/werkzeug in production
+if Config.IS_PRODUCTION:
+    logging.getLogger('eventlet.wsgi.server').setLevel(logging.ERROR)
+    logging.getLogger('eventlet').setLevel(logging.ERROR)
+    logging.getLogger('werkzeug').setLevel(logging.ERROR)  # Suppress HTTP access logs
+    # Disable Flask's default request logging
+    logging.getLogger('werkzeug').disabled = True
+
 app = Flask(__name__)
 
 # Secret key handling - require in production
