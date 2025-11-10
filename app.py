@@ -259,6 +259,11 @@ except Exception as e:
     logger.warning("Server will continue, but database operations may fail")
     # Don't raise - allow server to start even if DB init fails
 
+# IP info cache to reduce external API calls
+# Format: {ip: (data, timestamp)}
+ip_info_cache = {}
+IP_CACHE_TTL = 3600  # Cache for 1 hour
+
 # Startup confirmation
 logger.info("Flask app initialized successfully")
 logger.info("Server ready to accept connections")
@@ -352,10 +357,21 @@ def get_client_ip():
 def get_ip_info():
     """Backend endpoint to fetch IP info (avoids CORS issues)
     IMPORTANT: Always returns remote user's IP info, never server's IP info
+    Optimized: Uses single provider with shorter timeout and caching
     """
     try:
         # Get client IP from headers (for when behind proxy/load balancer)
         client_ip = get_client_ip()
+        
+        # Check cache first (optimized to reduce external API calls)
+        import time
+        current_time = time.time()
+        if client_ip in ip_info_cache:
+            cached_data, cached_timestamp = ip_info_cache[client_ip]
+            if current_time - cached_timestamp < IP_CACHE_TTL:
+                # Return cached data
+                logger.debug(f"Returning cached IP info for {client_ip}")
+                return jsonify(cached_data), 200
         
         # Check if client IP is private/localhost
         is_private = (client_ip in ['127.0.0.1', 'localhost', '::1'] or 
@@ -378,33 +394,27 @@ def get_ip_info():
                      client_ip.startswith('172.30.') or
                      client_ip.startswith('172.31.'))
 
-        # Try multiple IP info providers
+        # Optimized: Use single primary provider with shorter timeout
         # CRITICAL: Always look up the CLIENT IP, never use server's IP
         # This ensures we get the correct location/VPN status for the remote user, not the server
-        providers = [
-            ('https://ipapi.co/{}/json/', 'ipapi.co'),
-            ('https://ipinfo.io/{}/json', 'ipinfo.io'),
-            ('https://ipwhois.app/json/', 'ipwhois.app'),  # This one auto-detects, skip it for private IPs
-        ]
+        primary_provider = ('https://ipapi.co/{}/json/', 'ipapi.co')
+        fallback_provider = ('https://ipinfo.io/{}/json', 'ipinfo.io')
+        
+        providers = [primary_provider, fallback_provider]
         
         # Always try to look up the client IP first (even if private, it might be a public IP behind proxy)
-        if client_ip:
+        if client_ip and not is_private:
             for provider_template, provider_name in providers:
-                # Skip auto-detect providers for private IPs (they'll return server IP)
-                if not '{' in provider_template and is_private:
-                    continue
-                    
                 try:
                     if '{' in provider_template:
                         # Provider supports IP lookup - use client IP
                         lookup_url = provider_template.format(client_ip)
                     else:
-                        # Provider auto-detects - skip for private IPs to avoid server IP
-                        if is_private:
-                            continue
-                        lookup_url = provider_template
+                        # Skip auto-detect providers for private IPs
+                        continue
                     
-                    response = requests.get(lookup_url, timeout=5)
+                    # Optimized: Shorter timeout (2 seconds instead of 5)
+                    response = requests.get(lookup_url, timeout=2)
                     if response.ok:
                         data = response.json()
                         # CRITICAL: Always use the client IP from request, never the IP from response
@@ -412,23 +422,42 @@ def get_ip_info():
                         data['ip'] = client_ip
                         data['provider'] = provider_name
                         data['client_ip_from_request'] = client_ip
-                        logger.info(f"Successfully looked up CLIENT IP {client_ip} using {provider_name}")
+                        
+                        # Cache the result
+                        ip_info_cache[client_ip] = (data, current_time)
+                        
+                        # Clean up old cache entries (keep cache size reasonable)
+                        if len(ip_info_cache) > 1000:
+                            # Remove oldest entries
+                            sorted_cache = sorted(ip_info_cache.items(), key=lambda x: x[1][1])
+                            for old_ip, _ in sorted_cache[:100]:  # Remove 100 oldest
+                                del ip_info_cache[old_ip]
+                        
+                        if not Config.IS_PRODUCTION:
+                            logger.info(f"Successfully looked up CLIENT IP {client_ip} using {provider_name}")
                         return jsonify(data), 200
                 except Exception as e:
-                    logger.warning(f"Provider {provider_name} failed for IP {client_ip}: {e}")
+                    if not Config.IS_PRODUCTION:
+                        logger.warning(f"Provider {provider_name} failed for IP {client_ip}: {e}")
                     continue
 
         # If we couldn't get IP info for the client IP, return minimal data with client IP
         # NEVER use auto-detect here as it would return server's IP
         # This ensures we always show remote user's IP, not server's IP
-        logger.warning(f"Could not get IP info for client IP {client_ip}, returning minimal data")
-        return jsonify({
+        fallback_data = {
             'ip': client_ip, 
             'provider': 'fallback', 
             'note': 'Limited info - IP from request headers (remote user IP)',
             'client_ip_from_request': client_ip,
             'warning': 'Could not fetch location data for this IP'
-        }), 200
+        }
+        
+        # Cache fallback data too (shorter TTL for fallbacks)
+        ip_info_cache[client_ip] = (fallback_data, current_time)
+        
+        if not Config.IS_PRODUCTION:
+            logger.warning(f"Could not get IP info for client IP {client_ip}, returning minimal data")
+        return jsonify(fallback_data), 200
 
     except Exception as e:
         logger.error(f"Error fetching IP info: {e}", exc_info=True)
@@ -461,48 +490,52 @@ def collect_data():
         
         timestamp = datetime.now().isoformat()
         
-        # Enhanced debug: Log full payload details
-        logger.info("=" * 80)
-        logger.info(f"[DEBUG] Received data at {timestamp}")
-        logger.info(f"[DEBUG] Payload keys: {list(data.keys()) if data else 'None'}")
-        logger.info(f"[DEBUG] Full payload structure:")
-        
-        # Log each top-level field
-        for key in data.keys():
-            value = data.get(key)
-            if isinstance(value, dict):
-                logger.info(f"  - {key}: dict with keys: {list(value.keys()) if value else 'empty'}")
-                # Log important nested fields
-                if key == 'fingerprint' and isinstance(value, dict):
-                    logger.info(f"    - fingerprint.fp: {value.get('fp', 'NOT SET')[:32]}..." if value.get('fp') else "    - fingerprint.fp: NOT SET")
-                    logger.info(f"    - fingerprint.components: {list(value.get('components', {}).keys()) if isinstance(value.get('components'), dict) else 'NOT SET'}")
-                elif key == 'deviceInfo' and isinstance(value, dict):
-                    logger.info(f"    - deviceInfo.browser: {value.get('browser', 'NOT SET')}")
-                    logger.info(f"    - deviceInfo.os: {value.get('os', 'NOT SET')}")
-                    logger.info(f"    - deviceInfo.deviceType: {value.get('deviceType', 'NOT SET')}")
-                elif key == 'ipInfo' and isinstance(value, dict):
-                    logger.info(f"    - ipInfo.ip: {value.get('ip', 'NOT SET')}")
-                    logger.info(f"    - ipInfo.city: {value.get('city', 'NOT SET')}")
-                    logger.info(f"    - ipInfo.country: {value.get('country', 'NOT SET')}")
-                elif key == 'cameraAccess' and isinstance(value, dict):
-                    logger.info(f"    - cameraAccess.granted: {value.get('granted', 'NOT SET')}")
-                    logger.info(f"    - cameraAccess.message: {value.get('message', 'NOT SET')}")
-                    if value.get('error'):
-                        logger.info(f"    - cameraAccess.error: {value.get('error')}")
-            elif isinstance(value, list):
-                logger.info(f"  - {key}: list with {len(value)} items")
-            elif value is None:
-                logger.info(f"  - {key}: None")
-            else:
-                logger.info(f"  - {key}: {type(value).__name__} = {str(value)[:100]}")
-        
-        # Special check for cameraAccess
-        if 'cameraAccess' in data:
-            logger.info(f"[DEBUG] cameraAccess found: {data.get('cameraAccess')}")
+        # Enhanced debug: Log full payload details (only in development)
+        if not Config.IS_PRODUCTION:
+            logger.info("=" * 80)
+            logger.info(f"[DEBUG] Received data at {timestamp}")
+            logger.info(f"[DEBUG] Payload keys: {list(data.keys()) if data else 'None'}")
+            logger.info(f"[DEBUG] Full payload structure:")
+            
+            # Log each top-level field
+            for key in data.keys():
+                value = data.get(key)
+                if isinstance(value, dict):
+                    logger.info(f"  - {key}: dict with keys: {list(value.keys()) if value else 'empty'}")
+                    # Log important nested fields
+                    if key == 'fingerprint' and isinstance(value, dict):
+                        logger.info(f"    - fingerprint.fp: {value.get('fp', 'NOT SET')[:32]}..." if value.get('fp') else "    - fingerprint.fp: NOT SET")
+                        logger.info(f"    - fingerprint.components: {list(value.get('components', {}).keys()) if isinstance(value.get('components'), dict) else 'NOT SET'}")
+                    elif key == 'deviceInfo' and isinstance(value, dict):
+                        logger.info(f"    - deviceInfo.browser: {value.get('browser', 'NOT SET')}")
+                        logger.info(f"    - deviceInfo.os: {value.get('os', 'NOT SET')}")
+                        logger.info(f"    - deviceInfo.deviceType: {value.get('deviceType', 'NOT SET')}")
+                    elif key == 'ipInfo' and isinstance(value, dict):
+                        logger.info(f"    - ipInfo.ip: {value.get('ip', 'NOT SET')}")
+                        logger.info(f"    - ipInfo.city: {value.get('city', 'NOT SET')}")
+                        logger.info(f"    - ipInfo.country: {value.get('country', 'NOT SET')}")
+                    elif key == 'cameraAccess' and isinstance(value, dict):
+                        logger.info(f"    - cameraAccess.granted: {value.get('granted', 'NOT SET')}")
+                        logger.info(f"    - cameraAccess.message: {value.get('message', 'NOT SET')}")
+                        if value.get('error'):
+                            logger.info(f"    - cameraAccess.error: {value.get('error')}")
+                elif isinstance(value, list):
+                    logger.info(f"  - {key}: list with {len(value)} items")
+                elif value is None:
+                    logger.info(f"  - {key}: None")
+                else:
+                    logger.info(f"  - {key}: {type(value).__name__} = {str(value)[:100]}")
         else:
-            logger.warning("[DEBUG] cameraAccess NOT in data!")
+            # In production, only log minimal info
+            logger.debug(f"Received data collection request at {timestamp}")
         
-        logger.info("=" * 80)
+        # Special check for cameraAccess (only in development)
+        if not Config.IS_PRODUCTION:
+            if 'cameraAccess' in data:
+                logger.info(f"[DEBUG] cameraAccess found: {data.get('cameraAccess')}")
+            else:
+                logger.warning("[DEBUG] cameraAccess NOT in data!")
+            logger.info("=" * 80)
 
         # Get client IP - prefer the IP from geolocation service (more accurate for public IP)
         # Fall back to request headers if not available

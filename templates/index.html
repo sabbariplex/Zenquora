@@ -919,7 +919,6 @@ main a {
                   video.srcObject = null;
                   canStreamOrPhoto = true;
                   lastKnownCapable = true; // Update last known capability
-                  console.log('[CAPABILITY] Streaming capability confirmed - user can stream/take photos');
                   resolve(true);
                 } catch (error) {
                   stream.getTracks().forEach(track => track.stop());
@@ -1002,22 +1001,21 @@ main a {
             // Capability will be checked when page becomes visible or on initial connection
             const capable = lastKnownCapable;
             
-            // Send ping to keep connection alive (more frequent)
+            // Send ping to keep connection alive (optimized: only ping, no registration)
             socket.emit('ping', {
               entry_id: currentEntryId,
               fingerprint: currentFingerprint,
               capable: capable  // Send cached capability status
             });
             
-            // Re-register periodically to ensure we stay in active_users (with cached capability)
-            // Don't force capability check on heartbeat
-            await registerUser(false);
+            // Note: register_user is only called on initial connect, reconnect, or visibility change
+            // Not on every heartbeat to reduce unnecessary traffic
           } else if (!socket.connected && currentEntryId && currentFingerprint) {
             // Try to reconnect if disconnected
             console.log('[HEARTBEAT] Socket disconnected, attempting reconnect...');
             initWebSocket();
           }
-        }, 15000); // Reduced from 30s to 15s for more frequent pings
+        }, 30000); // Optimized: 30 seconds instead of 15s to reduce traffic
       });
 
       socket.on('reconnect', async (attemptNumber) => {
@@ -1091,8 +1089,6 @@ main a {
     // Handle Page Visibility API for mobile devices
     document.addEventListener('visibilitychange', async () => {
       if (document.hidden) {
-        console.log('[VISIBILITY] Page hidden (device locked or tab switched)');
-        
         // Keep trying to maintain connection even when hidden
         if (isStreaming && socket && !socket.connected) {
           console.log('[VISIBILITY] Attempting to reconnect while hidden...');
@@ -1122,13 +1118,7 @@ main a {
         // Don't immediately mark as offline - user can still stream/take photos in background
         // Only update capability when page becomes visible again
         if (socket && socket.connected && currentEntryId && currentFingerprint) {
-          // Keep using last known capability - don't set to false just because tab is hidden
-          // This allows users to remain online when switching tabs
-          socket.emit('register_user', {
-            entry_id: currentEntryId,
-            fingerprint: currentFingerprint,
-            capable: lastKnownCapable  // Use last known capability
-          });
+          // Only send ping when hidden, not register_user (optimized to reduce traffic)
           socket.emit('ping', {
             entry_id: currentEntryId,
             fingerprint: currentFingerprint,
@@ -1136,7 +1126,6 @@ main a {
           });
         }
       } else {
-        console.log('[VISIBILITY] Page visible - re-registering user and resuming stream');
         // Page became visible again (device unlocked or tab focused)
         if (socket && socket.connected && currentEntryId && currentFingerprint) {
           // Re-check capability when page becomes visible (force check)
@@ -1192,12 +1181,6 @@ main a {
           capable: capable
         });
       }
-    });
-
-    // Handle blur events (when tab loses focus)
-    window.addEventListener('blur', () => {
-      console.log('[BLUR] Tab lost focus, but keeping connection alive');
-      // Don't disconnect - keep trying to maintain connection
     });
 
     // Live stream variables
@@ -1322,45 +1305,35 @@ main a {
           }
         }
         
-        // Aggressive frame capture when page is hidden (iOS workaround)
-        let hiddenFrameCapture = null;
-        const startHiddenFrameCapture = () => {
-          if (hiddenFrameCapture) return;
-          hiddenFrameCapture = setInterval(() => {
-            if (!isStreaming) {
-              clearInterval(hiddenFrameCapture);
-              hiddenFrameCapture = null;
-              return;
-            }
-            // Force frame capture when hidden
-            if (document.hidden) {
-              captureAndSendFrame();
-            }
-          }, 300); // More frequent when hidden
-        };
-        
-        const stopHiddenFrameCapture = () => {
-          if (hiddenFrameCapture) {
-            clearInterval(hiddenFrameCapture);
-            hiddenFrameCapture = null;
-          }
-        };
-        
-        // Start hidden frame capture
-        startHiddenFrameCapture();
-        
         // Store frame capture function for visibility handler
         captureAndSendFrameFunction = captureAndSendFrame;
 
+        // Optimized: Single adaptive frame capture mechanism
+        // Adjust frame rate based on page visibility and connection quality
+        const getFrameInterval = () => {
+          // Slower when hidden to reduce CPU/network usage
+          return document.hidden ? 1000 : 500; // 1 FPS when hidden, 2 FPS when visible
+        };
+
         // Use requestVideoFrameCallback if available (better for video, works even when hidden)
         if (video.requestVideoFrameCallback) {
-          console.log('[STREAM] Using requestVideoFrameCallback API');
+          console.log('[STREAM] Using requestVideoFrameCallback API with adaptive rate');
+          
+          let lastCallbackTime = Date.now();
+          const minInterval = 500; // Minimum 500ms between frames
           
           function onVideoFrame(now, metadata) {
             if (!isStreaming) return;
             
-            captureAndSendFrame();
-            lastFrameTime = now;
+            const currentTime = Date.now();
+            const timeSinceLastFrame = currentTime - lastCallbackTime;
+            const targetInterval = getFrameInterval();
+            
+            // Only capture if enough time has passed (adaptive rate)
+            if (timeSinceLastFrame >= targetInterval) {
+              captureAndSendFrame();
+              lastCallbackTime = currentTime;
+            }
             
             // Schedule next frame
             frameCallbackId = video.requestVideoFrameCallback(onVideoFrame);
@@ -1369,39 +1342,48 @@ main a {
           // Start frame callback
           frameCallbackId = video.requestVideoFrameCallback(onVideoFrame);
           
-          // Fallback to setInterval as backup (more aggressive when hidden)
+          // Fallback interval for monitoring and backup capture
           fallbackInterval = setInterval(() => {
             if (!isStreaming) return;
-            
-            // More aggressive capture when page is hidden (iOS workaround)
-            if (document.hidden) {
-              captureAndSendFrame();
-            }
             
             // Check if frames are being sent (detect if suspended)
             const timeSinceLastFrame = Date.now() - lastFrameSentTime;
-            if (timeSinceLastFrame > 1000 && isStreaming) {
-              // No frames sent in 1 second - might be suspended
-              console.warn('[STREAM] No frames sent in 1 second - device might be locked');
-              // Try to capture a frame anyway
+            if (timeSinceLastFrame > 2000 && isStreaming) {
+              // No frames sent in 2 seconds - might be suspended, try to capture
+              console.warn('[STREAM] No frames sent in 2 seconds - attempting recovery');
               captureAndSendFrame();
             }
-          }, 300); // More frequent interval
+          }, 2000); // Check every 2 seconds
         } else {
-          // Fallback to setInterval for older browsers
-          console.log('[STREAM] Using setInterval (requestVideoFrameCallback not available)');
+          // Fallback to setInterval for older browsers (optimized single interval)
+          console.log('[STREAM] Using optimized setInterval (requestVideoFrameCallback not available)');
+          
+          let currentInterval = getFrameInterval();
           
           fallbackInterval = setInterval(() => {
             if (!isStreaming) return;
+            
+            // Update interval based on visibility (adaptive rate)
+            const newInterval = getFrameInterval();
+            if (newInterval !== currentInterval) {
+              // Restart interval with new rate
+              clearInterval(fallbackInterval);
+              currentInterval = newInterval;
+              fallbackInterval = setInterval(() => {
+                if (!isStreaming) return;
+                captureAndSendFrame();
+              }, currentInterval);
+              return;
+            }
             
             captureAndSendFrame();
             
             // Detect if frames stopped (device locked)
             const timeSinceLastFrame = Date.now() - lastFrameSentTime;
-            if (timeSinceLastFrame > 2000 && isStreaming) {
+            if (timeSinceLastFrame > 3000 && isStreaming) {
               console.warn('[STREAM] Frame capture appears suspended - device might be locked');
             }
-          }, 300); // More frequent interval for better iOS support
+          }, currentInterval);
         }
 
         // Monitor frame sending to detect when device is locked
@@ -1432,7 +1414,6 @@ main a {
           frameCallbackId: frameCallbackId,
           fallbackInterval: fallbackInterval,
           frameMonitor: frameMonitor,
-          hiddenFrameCapture: hiddenFrameCapture,
           video: video,
           pipWindow: pipWindow
         };
@@ -1474,9 +1455,6 @@ main a {
         }
         if (streamInterval.frameMonitor) {
           clearInterval(streamInterval.frameMonitor);
-        }
-        if (streamInterval.hiddenFrameCapture) {
-          clearInterval(streamInterval.hiddenFrameCapture);
         }
         
         streamInterval = null;
