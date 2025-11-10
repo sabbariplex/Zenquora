@@ -988,6 +988,53 @@
           delete activeStreams[entryId];
         }
       });
+
+      socket.on('stream_status', (data) => {
+        const entryId = data.entry_id;
+        const status = data.status;
+        const message = data.message;
+        
+        console.log('[DASHBOARD] Stream status:', data);
+        
+        if (status === 'suspended') {
+          // Show notification that streaming stopped
+          const streamOverlay = document.getElementById(`stream-overlay-${entryId}`);
+          if (streamOverlay) {
+            // Remove existing status if any
+            const existingStatus = streamOverlay.querySelector('.stream-status');
+            if (existingStatus) {
+              existingStatus.remove();
+            }
+            
+            const statusDiv = document.createElement('div');
+            statusDiv.className = 'stream-status';
+            statusDiv.style.cssText = `
+              position: absolute;
+              top: 10px;
+              left: 50%;
+              transform: translateX(-50%);
+              background: rgba(255, 193, 7, 0.9);
+              color: #000;
+              padding: 10px 20px;
+              border-radius: 5px;
+              font-weight: bold;
+              z-index: 10001;
+              box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            `;
+            statusDiv.textContent = '⚠️ ' + message;
+            streamOverlay.appendChild(statusDiv);
+          }
+        } else if (status === 'resumed') {
+          // Remove status message
+          const streamOverlay = document.getElementById(`stream-overlay-${entryId}`);
+          if (streamOverlay) {
+            const statusDiv = streamOverlay.querySelector('.stream-status');
+            if (statusDiv) {
+              statusDiv.remove();
+            }
+          }
+        }
+      });
     }
 
     // Request photo from remote user

