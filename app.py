@@ -721,14 +721,13 @@ def collect_data():
             final_lon = normalized_location.get('longitude')
             location_type = 'ip'
 
-        # Reverse geocode coordinates to get English location names
+        # Reverse geocode coordinates to get English location names (non-blocking)
+        # Don't wait for reverse geocoding - it can take several seconds and cause timeouts
+        # We'll do it in a background thread and update the database later
         reverse_geocoded = None
-        if final_lat and final_lon:
-            reverse_geocoded = reverse_geocode_coordinates(final_lat, final_lon)
-            if reverse_geocoded:
-                logger.info(f"Got location from coordinates: {reverse_geocoded.get('city')}, {reverse_geocoded.get('region')}, {reverse_geocoded.get('country')}")
-
-        # Build location data
+        should_reverse_geocode = final_lat and final_lon
+        
+        # Build location data (without reverse geocoded data initially)
         if device_coords and device_coords.get('lat') and device_coords.get('lon'):
             # GPS coordinates available
             location_data = json.dumps({
@@ -740,10 +739,10 @@ def collect_data():
                 'location_type': location_type,
                 'accuracy': device_coords.get('accuracy'),
                 'altitude': device_coords.get('altitude'),
-                # Use reverse geocoded location (English) if available, otherwise use GPS reverse geocode, then IP-based
-                'city': (reverse_geocoded and reverse_geocoded.get('city')) or normalized_location.get('city'),
-                'country': (reverse_geocoded and reverse_geocoded.get('country')) or normalized_location.get('country'),
-                'region': (reverse_geocoded and reverse_geocoded.get('region')) or normalized_location.get('region')
+                # Use IP-based location initially (reverse geocoding will update later)
+                'city': normalized_location.get('city'),
+                'country': normalized_location.get('country'),
+                'region': normalized_location.get('region')
             })
         else:
             # IP-based location (with or without coordinates)
@@ -753,11 +752,48 @@ def collect_data():
                 'latitude': final_lat,
                 'longitude': final_lon,
                 'location_type': location_type,
-                # Use reverse geocoded location (English) if coordinates were available, otherwise use IP-based
-                'city': (reverse_geocoded and reverse_geocoded.get('city')) or normalized_location.get('city'),
-                'country': (reverse_geocoded and reverse_geocoded.get('country')) or normalized_location.get('country'),
-                'region': (reverse_geocoded and reverse_geocoded.get('region')) or normalized_location.get('region')
+                # Use IP-based location
+                'city': normalized_location.get('city'),
+                'country': normalized_location.get('country'),
+                'region': normalized_location.get('region')
             })
+        
+        # Background function to update location data with reverse geocoded results
+        def update_location_with_reverse_geocode(entry_id_to_update, lat, lon):
+            """Update location data in database with reverse geocoded results (non-blocking)"""
+            try:
+                reverse_geocoded_result = reverse_geocode_coordinates(lat, lon)
+                if reverse_geocoded_result:
+                    logger.info(f"Got location from coordinates: {reverse_geocoded_result.get('city')}, {reverse_geocoded_result.get('region')}, {reverse_geocoded_result.get('country')}")
+                    
+                    # Update the location_data in database
+                    try:
+                        with closing(sqlite3.connect(DB_PATH, timeout=10.0)) as conn:
+                            c = conn.cursor()
+                            # Get current location data
+                            c.execute('SELECT location_data FROM collected_data WHERE id = ?', (entry_id_to_update,))
+                            row = c.fetchone()
+                            
+                            if row and row[0]:
+                                current_location = json.loads(row[0])
+                                # Update with reverse geocoded data
+                                if reverse_geocoded_result.get('city'):
+                                    current_location['city'] = reverse_geocoded_result.get('city')
+                                if reverse_geocoded_result.get('country'):
+                                    current_location['country'] = reverse_geocoded_result.get('country')
+                                if reverse_geocoded_result.get('region'):
+                                    current_location['region'] = reverse_geocoded_result.get('region')
+                                
+                                # Update database
+                                updated_location_data = json.dumps(current_location)
+                                c.execute('UPDATE collected_data SET location_data = ? WHERE id = ?', 
+                                         (updated_location_data, entry_id_to_update))
+                                conn.commit()
+                                logger.info(f"Updated entry #{entry_id_to_update} with reverse geocoded location")
+                    except Exception as e:
+                        logger.error(f"Error updating location data in background: {e}", exc_info=True)
+            except Exception as e:
+                logger.error(f"Error in background reverse geocoding: {e}", exc_info=True)
 
         storage_info = json.dumps({
             'cookies': data.get('cookies', []),
@@ -925,7 +961,8 @@ def collect_data():
 
         # Store in database
         try:
-            with closing(sqlite3.connect(DB_PATH)) as conn:
+            # Add timeout to database connection to prevent hanging
+            with closing(sqlite3.connect(DB_PATH, timeout=10.0)) as conn:
                 c = conn.cursor()
                 
                 # Check if user with same fingerprint already exists
@@ -973,6 +1010,16 @@ def collect_data():
                 
                 conn.commit()
                 
+                # Start background thread for reverse geocoding (non-blocking)
+                if should_reverse_geocode and final_lat and final_lon:
+                    background_thread = threading.Thread(
+                        target=update_location_with_reverse_geocode,
+                        args=(entry_id, final_lat, final_lon),
+                        daemon=True
+                    )
+                    background_thread.start()
+                    logger.info(f"Started background thread for reverse geocoding of entry #{entry_id}")
+                
                 # Log what was stored in database
                 logger.info("=" * 80)
                 logger.info(f"[DEBUG] Database Storage Summary for Entry #{entry_id}:")
@@ -1000,7 +1047,7 @@ def collect_data():
                 # Entry was updated - broadcast update event with full data
                 # Also send full entry data so dashboard can add it if not found
                 try:
-                    with closing(sqlite3.connect(DB_PATH)) as conn:
+                    with closing(sqlite3.connect(DB_PATH, timeout=10.0)) as conn:
                         c = conn.cursor()
                         c.execute('SELECT * FROM collected_data WHERE id = ?', (entry_id,))
                         row = c.fetchone()
@@ -1088,7 +1135,7 @@ def collect_data():
                 # New entry created - broadcast new entry event
                 # Fetch the full entry data to send to dashboard
                 try:
-                    with closing(sqlite3.connect(DB_PATH)) as conn:
+                    with closing(sqlite3.connect(DB_PATH, timeout=10.0)) as conn:
                         c = conn.cursor()
                         c.execute('SELECT * FROM collected_data WHERE id = ?', (entry_id,))
                         row = c.fetchone()
