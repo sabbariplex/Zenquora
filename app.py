@@ -25,13 +25,23 @@ if is_production:
     # Try eventlet first (more stable for production with socketio.run())
     try:
         import eventlet
-        eventlet.monkey_patch()
-        async_mode = 'eventlet'
-        print(f"[SOCKETIO] Using eventlet async mode (production - Railway: {is_railway}, Render: {is_render})")
+        # Try to monkey patch, but handle errors gracefully
+        try:
+            eventlet.monkey_patch()
+            async_mode = 'eventlet'
+            print(f"[SOCKETIO] Using eventlet async mode (production - Railway: {is_railway}, Render: {is_render})")
+        except Exception as e:
+            # If monkey patching fails, fall back to threading
+            print(f"[SOCKETIO] Eventlet monkey patch failed: {e}, falling back to threading")
+            async_mode = 'threading'
     except ImportError:
         # Fall back to threading if eventlet not available
         async_mode = 'threading'
         print("[SOCKETIO] Eventlet not available, using threading mode")
+    except Exception as e:
+        # Catch any other errors with eventlet
+        print(f"[SOCKETIO] Error with eventlet: {e}, using threading mode")
+        async_mode = 'threading'
 else:
     # Use threading for local development
     async_mode = 'threading'
@@ -180,8 +190,14 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Initialize database on startup
-init_db()
+# Initialize database on startup (with error handling to prevent blocking)
+try:
+    init_db()
+    print("[APP] Database initialized successfully")
+except Exception as e:
+    print(f"[APP WARNING] Database initialization failed: {e}")
+    print("[APP WARNING] Server will continue, but database operations may fail")
+    # Don't raise - allow server to start even if DB init fails
 
 # Print startup confirmation
 print("[APP] Flask app initialized successfully")
