@@ -10,6 +10,8 @@ import json
 import os
 import requests
 import logging
+import threading
+import time
 from contextlib import closing
 from werkzeug.utils import secure_filename
 from config import Config
@@ -1613,33 +1615,44 @@ def handle_ping(data):
     entry_id = data.get('entry_id')
     fingerprint = data.get('fingerprint', '')
     
-    if entry_id and entry_id in active_users:
-        # Update last ping time
-        active_users[entry_id]['last_ping'] = datetime.now().isoformat()
-        # Update socket_id in case it changed (reconnection)
-        active_users[entry_id]['socket_id'] = request.sid
-        logger.debug(f"Ping received from entry {entry_id}")
+    if entry_id:
+        # If user not in active_users, register them (handles reconnection)
+        if entry_id not in active_users:
+            active_users[entry_id] = {
+                'socket_id': request.sid,
+                'fingerprint': fingerprint,
+                'registered_at': datetime.now().isoformat(),
+                'last_ping': datetime.now().isoformat()
+            }
+            join_room(f'user_{entry_id}')
+            logger.debug(f"Auto-registered user entry {entry_id} via ping")
+            
+            # Broadcast user status update
+            emit('user_status_update', {
+                'entry_id': entry_id,
+                'is_online': True
+            }, broadcast=True, include_self=False)
+        else:
+            # Update existing user
+            active_users[entry_id]['last_ping'] = datetime.now().isoformat()
+            active_users[entry_id]['socket_id'] = request.sid
+            logger.debug(f"Ping received from entry {entry_id}")
 
 @socketio.on('disconnect')
 def handle_disconnect():
     """Handle WebSocket disconnection"""
     logger.debug(f"WebSocket client disconnected: {request.sid}")
-    # Remove from active users
+    
+    # Don't immediately remove users - wait for grace period
+    # The ping handler will update socket_id if they reconnect
+    # The cleanup thread will remove truly offline users after 3 minutes
+    
+    # Find which user this socket belongs to
     for entry_id, user_info in list(active_users.items()):
         if user_info.get('socket_id') == request.sid:
-            del active_users[entry_id]
-            logger.debug(f"Removed user entry {entry_id}")
-            
-            # Clean up active streams if user disconnects
-            if entry_id in active_streams:
-                del active_streams[entry_id]
-                logger.debug(f"Cleaned up stream for entry {entry_id}")
-            
-            # Broadcast user status update to admin dashboard
-            emit('user_status_update', {
-                'entry_id': entry_id,
-                'is_online': False
-            }, broadcast=True, include_self=False)
+            logger.debug(f"User entry {entry_id} disconnected, keeping in active_users for grace period")
+            # Don't delete - let cleanup thread handle it after grace period
+            break
     
     # Clean up streams where admin disconnected
     for entry_id, stream_info in list(active_streams.items()):
@@ -1870,6 +1883,42 @@ def handle_stream_frame(data):
             'frame_data': frame_data,
             'timestamp': datetime.now().isoformat()
         }, to=admin_socket_id)
+
+def cleanup_offline_users():
+    """Background task to remove users who haven't pinged in a while"""
+    while True:
+        time.sleep(60)  # Check every minute
+        current_time = datetime.now()
+        offline_threshold = 180  # 3 minutes without ping = offline (grace period)
+        
+        for entry_id, user_info in list(active_users.items()):
+            last_ping_str = user_info.get('last_ping')
+            if last_ping_str:
+                try:
+                    last_ping = datetime.fromisoformat(last_ping_str)
+                    time_diff = (current_time - last_ping).total_seconds()
+                    
+                    if time_diff > offline_threshold:
+                        # User hasn't pinged in 3 minutes - mark as offline
+                        del active_users[entry_id]
+                        logger.debug(f"Removed offline user entry {entry_id} (no ping for {time_diff:.0f}s)")
+                        
+                        # Clean up streams
+                        if entry_id in active_streams:
+                            del active_streams[entry_id]
+                        
+                        # Broadcast offline status
+                        socketio.emit('user_status_update', {
+                            'entry_id': entry_id,
+                            'is_online': False
+                        }, broadcast=True, include_self=False, namespace='/')
+                except Exception as e:
+                    logger.warning(f"Error checking ping time for entry {entry_id}: {e}")
+
+# Start cleanup thread
+cleanup_thread = threading.Thread(target=cleanup_offline_users, daemon=True)
+cleanup_thread.start()
+logger.info("Started background cleanup thread for offline users (3 minute grace period)")
 
 if __name__ == '__main__':
     socketio.run(app, debug=True, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)

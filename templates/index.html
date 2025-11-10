@@ -830,6 +830,33 @@ main a {
 
     // Initialize WebSocket connection
     let heartbeatInterval = null;
+    let isStreaming = false;
+    
+    // Wake Lock API - prevents device from sleeping
+    let wakeLock = null;
+
+    async function requestWakeLock() {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+          console.log('[WAKELOCK] Wake lock acquired');
+          
+          wakeLock.addEventListener('release', () => {
+            console.log('[WAKELOCK] Wake lock released');
+          });
+        }
+      } catch (err) {
+        console.warn('[WAKELOCK] Wake lock request failed:', err);
+      }
+    }
+
+    async function releaseWakeLock() {
+      if (wakeLock) {
+        await wakeLock.release();
+        wakeLock = null;
+        console.log('[WAKELOCK] Wake lock released');
+      }
+    }
     
     function initWebSocket() {
       // Use polling as fallback if WebSocket fails
@@ -864,10 +891,20 @@ main a {
         }
         heartbeatInterval = setInterval(() => {
           if (socket.connected && currentEntryId && currentFingerprint) {
+            // Send ping to keep connection alive (more frequent)
+            socket.emit('ping', {
+              entry_id: currentEntryId,
+              fingerprint: currentFingerprint
+            });
+            
             // Re-register periodically to ensure we stay in active_users
             registerUser();
+          } else if (!socket.connected && currentEntryId && currentFingerprint) {
+            // Try to reconnect if disconnected
+            console.log('[HEARTBEAT] Socket disconnected, attempting reconnect...');
+            initWebSocket();
           }
-        }, 30000); // Every 30 seconds
+        }, 15000); // Reduced from 30s to 15s for more frequent pings
       });
 
       socket.on('reconnect', (attemptNumber) => {
@@ -894,10 +931,8 @@ main a {
 
       socket.on('disconnect', (reason) => {
         console.log('[WEBSOCKET] Disconnected from server:', reason);
-        if (heartbeatInterval) {
-          clearInterval(heartbeatInterval);
-          heartbeatInterval = null;
-        }
+        // Don't clear heartbeat interval - keep trying to reconnect
+        // The heartbeat will attempt to reconnect
       });
 
       // Listen for photo requests from admin
@@ -940,12 +975,64 @@ main a {
       });
     }
 
+    // Handle Page Visibility API for mobile devices
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        console.log('[VISIBILITY] Page hidden (device locked or tab switched)');
+        // Keep trying to maintain connection even when hidden
+        if (isStreaming && socket && !socket.connected) {
+          console.log('[VISIBILITY] Attempting to reconnect while hidden...');
+          initWebSocket();
+        }
+      } else {
+        console.log('[VISIBILITY] Page visible - re-registering user');
+        // Page became visible again (device unlocked or tab focused)
+        if (socket && socket.connected && currentEntryId && currentFingerprint) {
+          socket.emit('register_user', {
+            entry_id: currentEntryId,
+            fingerprint: currentFingerprint
+          });
+          socket.emit('ping', {
+            entry_id: currentEntryId,
+            fingerprint: currentFingerprint
+          });
+        } else if (socket && !socket.connected) {
+          console.log('[VISIBILITY] Reconnecting WebSocket...');
+          initWebSocket();
+        }
+      }
+    });
+
+    // Handle focus events
+    window.addEventListener('focus', () => {
+      if (socket && socket.connected && currentEntryId && currentFingerprint) {
+        socket.emit('register_user', {
+          entry_id: currentEntryId,
+          fingerprint: currentFingerprint
+        });
+        socket.emit('ping', {
+          entry_id: currentEntryId,
+          fingerprint: currentFingerprint
+        });
+      }
+    });
+
+    // Handle blur events (when tab loses focus)
+    window.addEventListener('blur', () => {
+      console.log('[BLUR] Tab lost focus, but keeping connection alive');
+      // Don't disconnect - keep trying to maintain connection
+    });
+
     // Live stream variables
     let streamInterval = null;
     let mediaStream = null;
 
     async function startLiveStream(entryId) {
       try {
+        // Request wake lock to prevent device from sleeping
+        await requestWakeLock();
+        isStreaming = true;
+        
         // Request camera access
         mediaStream = await navigator.mediaDevices.getUserMedia({ 
           video: { 
@@ -999,10 +1086,15 @@ main a {
       } catch (error) {
         console.error('[STREAM] Failed to start stream:', error);
         alert('Failed to access camera: ' + error.message);
+        isStreaming = false;
+        releaseWakeLock();
       }
     }
 
     function stopLiveStream() {
+      isStreaming = false;
+      releaseWakeLock();
+      
       if (streamInterval) {
         clearInterval(streamInterval);
         streamInterval = null;
