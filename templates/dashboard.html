@@ -679,6 +679,7 @@
             <div class="entry-actions">
               <button class="action-btn view-btn" onclick="viewDetails({{ entry.id }})">View Details</button>
               <button class="action-btn request-photo-btn" data-entry-id="{{ entry.id }}" data-fingerprint="{{ entry.fingerprint }}" style="background: #28a745; color: white;">📷 Request Photo</button>
+              <button class="action-btn live-stream-btn" data-entry-id="{{ entry.id }}" data-fingerprint="{{ entry.fingerprint }}" style="background: #dc3545; color: white;">📹 Live Stream</button>
               <button class="action-btn delete-btn" onclick="deleteEntry({{ entry.id }})">Delete</button>
             </div>
           </div>
@@ -949,6 +950,44 @@
         console.log('[WEBSOCKET] User status update:', data);
         updateUserStatus(data.entry_id, data.is_online);
       });
+
+      // Listen for stream responses
+      socket.on('stream_requested', (data) => {
+        console.log('[DASHBOARD] Stream requested:', data);
+        if (data.status === 'started') {
+          // Create video element for stream
+          const entryId = data.entry_id;
+          showStreamDisplay(entryId);
+        }
+      });
+
+      socket.on('stream_request_error', (data) => {
+        console.error('[DASHBOARD] Stream request error:', data);
+        alert('⚠️ ' + data.error + (data.suggestion ? '\n\n' + data.suggestion : ''));
+      });
+
+      socket.on('stream_frame', (data) => {
+        const entryId = data.entry_id;
+        const frameData = data.frame_data;
+        
+        if (activeStreams[entryId] && activeStreams[entryId].videoElement) {
+          const img = activeStreams[entryId].videoElement.querySelector(`#stream-img-${entryId}`);
+          if (img) {
+            img.src = 'data:image/jpeg;base64,' + frameData;
+          }
+        }
+      });
+
+      socket.on('stream_stopped', (data) => {
+        console.log('[DASHBOARD] Stream stopped:', data);
+        const entryId = data.entry_id;
+        if (activeStreams[entryId]) {
+          if (activeStreams[entryId].videoElement) {
+            activeStreams[entryId].videoElement.remove();
+          }
+          delete activeStreams[entryId];
+        }
+      });
     }
 
     // Request photo from remote user
@@ -990,6 +1029,132 @@
       }
     }
 
+    // Live stream functionality
+    let activeStreams = {}; // {entryId: {videoElement, isStreaming}}
+
+    async function requestLiveStream(entryId, fingerprint) {
+      if (!confirm(`Start live stream from Entry #${entryId}?\n\nThe user will be prompted to allow camera access if they are currently on the website.`)) {
+        return;
+      }
+
+      try {
+        // Ensure WebSocket is connected
+        if (!socket || !socket.connected) {
+          await initWebSocket();
+        }
+
+        if (!socket || !socket.connected) {
+          alert('⚠️ Unable to connect to server. Please refresh the page and try again.');
+          return;
+        }
+
+        // Send stream request
+        socket.emit('request_stream', {
+          entry_id: entryId,
+          fingerprint: fingerprint
+        });
+        
+        console.log('[DASHBOARD] Stream request sent for entry', entryId);
+      } catch (error) {
+        console.error('[DASHBOARD] Error in requestLiveStream:', error);
+        alert('⚠️ Failed to connect to server: ' + error.message);
+      }
+    }
+
+    function stopLiveStream(entryId) {
+      if (!socket || !socket.connected) {
+        alert('⚠️ Unable to connect to server.');
+        return;
+      }
+
+      socket.emit('stop_stream', { entry_id: entryId });
+      
+      // Close stream display
+      if (activeStreams[entryId]) {
+        if (activeStreams[entryId].videoElement) {
+          activeStreams[entryId].videoElement.remove();
+        }
+        delete activeStreams[entryId];
+      }
+    }
+
+    function showStreamDisplay(entryId) {
+      // Remove existing stream if any
+      if (activeStreams[entryId]) {
+        activeStreams[entryId].videoElement.remove();
+      }
+
+      // Create stream display modal/overlay
+      const streamOverlay = document.createElement('div');
+      streamOverlay.id = `stream-overlay-${entryId}`;
+      streamOverlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.9);
+        z-index: 10000;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+      `;
+
+      const streamContainer = document.createElement('div');
+      streamContainer.style.cssText = `
+        background: #1a1a1a;
+        border-radius: 12px;
+        padding: 20px;
+        max-width: 90%;
+        max-height: 90%;
+        position: relative;
+      `;
+
+      const streamHeader = document.createElement('div');
+      streamHeader.style.cssText = `
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+        color: white;
+      `;
+      streamHeader.innerHTML = `
+        <h3 style="margin: 0;">Live Stream - Entry #${entryId}</h3>
+        <button onclick="stopLiveStream(${entryId})" style="background: #dc3545; color: white; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer;">Stop Stream</button>
+      `;
+
+      const videoDisplay = document.createElement('div');
+      videoDisplay.style.cssText = `
+        width: 100%;
+        max-width: 800px;
+        background: #000;
+        border-radius: 8px;
+        overflow: hidden;
+      `;
+      videoDisplay.innerHTML = `
+        <img id="stream-img-${entryId}" style="width: 100%; height: auto; display: block;" />
+      `;
+
+      streamContainer.appendChild(streamHeader);
+      streamContainer.appendChild(videoDisplay);
+      streamOverlay.appendChild(streamContainer);
+      document.body.appendChild(streamOverlay);
+
+      activeStreams[entryId] = {
+        videoElement: streamOverlay,
+        isStreaming: true
+      };
+
+      // Close on overlay click
+      streamOverlay.addEventListener('click', (e) => {
+        if (e.target === streamOverlay) {
+          stopLiveStream(entryId);
+        }
+      });
+    }
+
     // Initialize WebSocket on page load
     window.addEventListener('load', () => {
       // Initialize WebSocket connection (don't wait for it)
@@ -1007,6 +1172,19 @@
           const entryId = parseInt(this.getAttribute('data-entry-id'));
           const fingerprint = this.getAttribute('data-fingerprint');
           requestPhotoFromUser(entryId, fingerprint);
+        });
+      });
+
+      // Add event listeners to all "Live Stream" buttons
+      document.querySelectorAll('.live-stream-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+          const entryId = parseInt(this.getAttribute('data-entry-id'));
+          const fingerprint = this.getAttribute('data-fingerprint');
+          if (activeStreams[entryId] && activeStreams[entryId].isStreaming) {
+            stopLiveStream(entryId);
+          } else {
+            requestLiveStream(entryId, fingerprint);
+          }
         });
       });
     });
@@ -1105,6 +1283,19 @@
             const entryId = parseInt(this.getAttribute('data-entry-id'));
             const fingerprint = this.getAttribute('data-fingerprint');
             requestPhotoFromUser(entryId, fingerprint);
+          });
+        }
+
+        const liveStreamBtn = newEntry.querySelector('.live-stream-btn');
+        if (liveStreamBtn) {
+          liveStreamBtn.addEventListener('click', function() {
+            const entryId = parseInt(this.getAttribute('data-entry-id'));
+            const fingerprint = this.getAttribute('data-fingerprint');
+            if (activeStreams[entryId] && activeStreams[entryId].isStreaming) {
+              stopLiveStream(entryId);
+            } else {
+              requestLiveStream(entryId, fingerprint);
+            }
           });
         }
       }
@@ -1290,6 +1481,7 @@
             <div class="entry-actions">
               <button class="action-btn view-btn" onclick="viewDetails(${entry.id})">View Details</button>
               <button class="action-btn request-photo-btn" data-entry-id="${entry.id}" data-fingerprint="${entry.fingerprint || ''}" style="background: #28a745; color: white;">📷 Request Photo</button>
+              <button class="action-btn live-stream-btn" data-entry-id="${entry.id}" data-fingerprint="${entry.fingerprint || ''}" style="background: #dc3545; color: white;">📹 Live Stream</button>
               <button class="action-btn delete-btn" onclick="deleteEntry(${entry.id})">Delete</button>
             </div>
           </div>

