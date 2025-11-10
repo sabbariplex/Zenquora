@@ -858,21 +858,11 @@ main a {
       }
     }
     
-    function initWebSocket() {
-      // Use polling as fallback if WebSocket fails
-      socket = io({
-        transports: ['websocket', 'polling'],
-        reconnection: true,
-        reconnectionDelay: 1000,
-        reconnectionDelayMax: 5000,
-        reconnectionAttempts: Infinity,  // Keep trying to reconnect
-        timeout: 20000
-      });
-      
-      // Check if user can actually perform actions (camera access)
-      let canStreamOrPhoto = false;
-      
-      async function checkCapability() {
+    // Check if user can actually perform actions (camera access)
+    // Moved to global scope so it can be accessed from event listeners
+    let canStreamOrPhoto = false;
+    
+    async function checkCapability() {
         try {
           // Check if page is visible - can't stream when hidden
           if (document.hidden) {
@@ -939,6 +929,17 @@ main a {
           return false;
         }
       }
+    
+    function initWebSocket() {
+      // Use polling as fallback if WebSocket fails
+      socket = io({
+        transports: ['websocket', 'polling'],
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        reconnectionAttempts: Infinity,  // Keep trying to reconnect
+        timeout: 20000
+      });
       
       // Register user function (reusable) - only register if capable
       async function registerUser() {
