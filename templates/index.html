@@ -1004,7 +1004,7 @@ main a {
     }
 
     // Handle Page Visibility API for mobile devices
-    document.addEventListener('visibilitychange', () => {
+    document.addEventListener('visibilitychange', async () => {
       if (document.hidden) {
         console.log('[VISIBILITY] Page hidden (device locked or tab switched)');
         // Keep trying to maintain connection even when hidden
