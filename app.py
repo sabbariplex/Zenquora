@@ -266,11 +266,6 @@ def index():
     """Serve the main page with the button"""
     return render_template('index.html')
 
-@app.route('/test')
-def test_page():
-    """Test page to diagnose Railway connection issues"""
-    return render_template('test.html')
-
 @app.route('/health')
 def health():
     """Health check endpoint for Railway"""
