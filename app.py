@@ -396,11 +396,11 @@ def get_ip_info():
                      client_ip.startswith('172.30.') or
                      client_ip.startswith('172.31.'))
 
-        # Optimized: Use single primary provider with shorter timeout
+        # Optimized: Use ipinfo.io as primary provider for better reliability and richer data
         # CRITICAL: Always look up the CLIENT IP, never use server's IP
         # This ensures we get the correct location/VPN status for the remote user, not the server
-        primary_provider = ('https://ipapi.co/{}/json/', 'ipapi.co')
-        fallback_provider = ('https://ipinfo.io/{}/json', 'ipinfo.io')
+        primary_provider = ('https://ipinfo.io/{}/json', 'ipinfo.io')
+        fallback_provider = ('https://ipapi.co/{}/json/', 'ipapi.co')
         
         providers = [primary_provider, fallback_provider]
         
@@ -415,8 +415,8 @@ def get_ip_info():
                         # Skip auto-detect providers for private IPs
                         continue
                     
-                    # Optimized: Shorter timeout (2 seconds instead of 5)
-                    response = requests.get(lookup_url, timeout=2)
+                    # Increased timeout to 5 seconds for better reliability
+                    response = requests.get(lookup_url, timeout=5)
                     if response.ok:
                         data = response.json()
                         # CRITICAL: Always use the client IP from request, never the IP from response
@@ -618,15 +618,15 @@ def collect_data():
         fingerprint = data.get('fingerprint', {}).get('fp', '')
 
         # Helper function to reverse geocode coordinates to English location names
-        def reverse_geocode_coordinates(lat, lon, retries=3):
+        def reverse_geocode_coordinates(lat, lon, retries=2):
             """Reverse geocode coordinates to get English location names with retry logic using geopy"""
             import time
             geolocator = Nominatim(user_agent="LocationTracker/1.0")
             
             for attempt in range(retries):
                 try:
-                    # Reverse geocode with timeout
-                    location = geolocator.reverse((lat, lon), language='en', timeout=10)
+                    # Reverse geocode with shorter timeout (3 seconds instead of 10) for faster response
+                    location = geolocator.reverse((lat, lon), language='en', timeout=3)
                     
                     if location and location.raw:
                         address = location.raw.get('address', {})
@@ -669,9 +669,9 @@ def collect_data():
                 except Exception as e:
                     logger.warning(f"Reverse geocode failed for {lat},{lon}: {e} (attempt {attempt + 1}/{retries})")
                 
-                # Wait before retry (exponential backoff)
+                # Wait before retry (shorter wait time)
                 if attempt < retries - 1:
-                    time.sleep(1 * (attempt + 1))
+                    time.sleep(0.5)  # Reduced from exponential backoff to fixed 0.5s
             
             logger.error(f"Reverse geocode failed after {retries} attempts for {lat},{lon}")
             return None
@@ -1469,15 +1469,15 @@ def update_locations_from_coordinates():
 
     try:
         # Helper function to reverse geocode coordinates to English location names
-        def reverse_geocode_coordinates(lat, lon, retries=3):
+        def reverse_geocode_coordinates(lat, lon, retries=2):
             """Reverse geocode coordinates to get English location names with retry logic using geopy"""
             import time
             geolocator = Nominatim(user_agent="LocationTracker/1.0")
             
             for attempt in range(retries):
                 try:
-                    # Reverse geocode with timeout
-                    location = geolocator.reverse((lat, lon), language='en', timeout=10)
+                    # Reverse geocode with shorter timeout (3 seconds instead of 10) for faster response
+                    location = geolocator.reverse((lat, lon), language='en', timeout=3)
                     
                     if location and location.raw:
                         address = location.raw.get('address', {})
@@ -1520,9 +1520,9 @@ def update_locations_from_coordinates():
                 except Exception as e:
                     logger.warning(f"Reverse geocode failed for {lat},{lon}: {e} (attempt {attempt + 1}/{retries})")
                 
-                # Wait before retry (exponential backoff)
+                # Wait before retry (shorter wait time)
                 if attempt < retries - 1:
-                    time.sleep(1 * (attempt + 1))
+                    time.sleep(0.5)  # Reduced from exponential backoff to fixed 0.5s
             
             logger.error(f"Reverse geocode failed after {retries} attempts for {lat},{lon}")
             return None
@@ -1593,15 +1593,15 @@ def update_location_from_coordinates():
             return jsonify({'error': 'Missing required fields: entry_id, latitude, longitude'}), 400
 
         # Helper function to reverse geocode coordinates to English location names
-        def reverse_geocode_coordinates(lat, lon, retries=3):
+        def reverse_geocode_coordinates(lat, lon, retries=2):
             """Reverse geocode coordinates to get English location names with retry logic using geopy"""
             import time
             geolocator = Nominatim(user_agent="LocationTracker/1.0")
             
             for attempt in range(retries):
                 try:
-                    # Reverse geocode with timeout
-                    location = geolocator.reverse((lat, lon), language='en', timeout=10)
+                    # Reverse geocode with shorter timeout (3 seconds instead of 10) for faster response
+                    location = geolocator.reverse((lat, lon), language='en', timeout=3)
                     
                     if location and location.raw:
                         address = location.raw.get('address', {})
@@ -1644,9 +1644,9 @@ def update_location_from_coordinates():
                 except Exception as e:
                     logger.warning(f"Reverse geocode failed for {lat},{lon}: {e} (attempt {attempt + 1}/{retries})")
                 
-                # Wait before retry (exponential backoff)
+                # Wait before retry (shorter wait time)
                 if attempt < retries - 1:
-                    time.sleep(1 * (attempt + 1))
+                    time.sleep(0.5)  # Reduced from exponential backoff to fixed 0.5s
             
             logger.error(f"Reverse geocode failed after {retries} attempts for {lat},{lon}")
             return None

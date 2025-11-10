@@ -1995,11 +1995,11 @@
                 </div>
                 <div class="info-row">
                   <span class="info-label">Downlink</span>
-                  <span class="info-value">${entry.network_info.downlink !== 'unknown' ? entry.network_info.downlink + ' Mbps' : 'Unknown'}</span>
+                  <span class="info-value">${entry.network_info.downlink && entry.network_info.downlink !== 'unknown' && entry.network_info.downlink !== 'undefined' ? entry.network_info.downlink + ' Mbps' : 'Unknown'}</span>
                 </div>
                 <div class="info-row">
                   <span class="info-label">Latency</span>
-                  <span class="info-value">${entry.network_info.rtt !== 'unknown' ? entry.network_info.rtt + ' ms' : 'Unknown'}</span>
+                  <span class="info-value">${entry.network_info.rtt && entry.network_info.rtt !== 'unknown' && entry.network_info.rtt !== 'undefined' ? entry.network_info.rtt + ' ms' : 'Unknown'}</span>
                 </div>
               </div>
             </div>
