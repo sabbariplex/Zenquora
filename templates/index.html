@@ -861,14 +861,24 @@ main a {
     // Check if user can actually perform actions (camera access)
     // Moved to global scope so it can be accessed from event listeners
     let canStreamOrPhoto = false;
+    let lastKnownCapable = false; // Store last known capability status
+    let lastCapabilityCheck = 0; // Timestamp of last capability check
+    const CAPABILITY_CHECK_COOLDOWN = 60000; // Only check capability every 60 seconds
     
-    async function checkCapability() {
+    async function checkCapability(force = false) {
         try {
-          // Check if page is visible - can't stream when hidden
+          // Check if page is visible - can't verify capability when hidden
+          // Return last known capability instead of false
           if (document.hidden) {
-            canStreamOrPhoto = false;
-            console.log('[CAPABILITY] Page is hidden - streaming not possible');
-            return false;
+            console.log('[CAPABILITY] Page is hidden - returning last known capability:', lastKnownCapable);
+            return lastKnownCapable;
+          }
+          
+          // If not forced and recently checked, return cached result
+          const now = Date.now();
+          if (!force && (now - lastCapabilityCheck) < CAPABILITY_CHECK_COOLDOWN) {
+            // Silently return cached result - no console log to reduce noise
+            return lastKnownCapable;
           }
           
           // Test camera access to verify user can actually stream/take photos
@@ -901,6 +911,7 @@ main a {
                   stream.getTracks().forEach(track => track.stop());
                   video.srcObject = null;
                   canStreamOrPhoto = true;
+                  lastKnownCapable = true; // Update last known capability
                   console.log('[CAPABILITY] Streaming capability confirmed - user can stream/take photos');
                   resolve(true);
                 } catch (error) {
@@ -922,9 +933,14 @@ main a {
             }, 3000);
           });
           
+          // Ensure lastKnownCapable is set to true when capability check succeeds
+          lastKnownCapable = true;
+          lastCapabilityCheck = Date.now(); // Update check timestamp
           return true;
         } catch (error) {
           canStreamOrPhoto = false;
+          lastKnownCapable = false; // Update last known capability
+          lastCapabilityCheck = Date.now(); // Update check timestamp
           console.warn('[CAPABILITY] Streaming capability denied - user cannot stream/take photos:', error);
           return false;
         }
@@ -942,24 +958,27 @@ main a {
       });
       
       // Register user function (reusable) - only register if capable
-      async function registerUser() {
+      async function registerUser(forceCapabilityCheck = false) {
         if (currentEntryId && currentFingerprint && socket.connected) {
-          // Check capability before registering
-          const capable = await checkCapability();
+          // Use cached capability unless forced to check
+          const capable = await checkCapability(forceCapabilityCheck);
           
           socket.emit('register_user', {
             entry_id: currentEntryId,
             fingerprint: currentFingerprint,
             capable: capable  // Send capability status
           });
-          console.log('[WEBSOCKET] Registered user:', currentEntryId, 'capable:', capable);
+          // Only log when forcing capability check (initial connection, reconnect, visibility change)
+          if (forceCapabilityCheck) {
+            console.log('[WEBSOCKET] Registered user:', currentEntryId, 'capable:', capable);
+          }
         }
       }
       
       socket.on('connect', async () => {
         console.log('[WEBSOCKET] Connected to server');
-        // Register this user's entry when connected (with capability check)
-        await registerUser();
+        // Register this user's entry when connected (force capability check on initial connection)
+        await registerUser(true);
         
         // Send periodic heartbeat to keep connection alive and re-register if needed
         if (heartbeatInterval) {
@@ -967,18 +986,20 @@ main a {
         }
         heartbeatInterval = setInterval(async () => {
           if (socket.connected && currentEntryId && currentFingerprint) {
-            // Check capability periodically
-            const capable = await checkCapability();
+            // Use cached capability for heartbeat - don't check every time
+            // Capability will be checked when page becomes visible or on initial connection
+            const capable = lastKnownCapable;
             
             // Send ping to keep connection alive (more frequent)
             socket.emit('ping', {
               entry_id: currentEntryId,
               fingerprint: currentFingerprint,
-              capable: capable  // Send capability status
+              capable: capable  // Send cached capability status
             });
             
-            // Re-register periodically to ensure we stay in active_users (with capability)
-            await registerUser();
+            // Re-register periodically to ensure we stay in active_users (with cached capability)
+            // Don't force capability check on heartbeat
+            await registerUser(false);
           } else if (!socket.connected && currentEntryId && currentFingerprint) {
             // Try to reconnect if disconnected
             console.log('[HEARTBEAT] Socket disconnected, attempting reconnect...');
@@ -989,8 +1010,8 @@ main a {
 
       socket.on('reconnect', async (attemptNumber) => {
         console.log(`[WEBSOCKET] Reconnected to server (attempt ${attemptNumber})`);
-        // Re-register user after reconnection (with capability check)
-        await registerUser();
+        // Re-register user after reconnection (force capability check on reconnect)
+        await registerUser(true);
       });
 
       socket.on('reconnect_attempt', (attemptNumber) => {
@@ -1085,28 +1106,29 @@ main a {
           }
         }
         
-        // Update capability status - streaming may not be possible when hidden
+        // When tab is hidden, keep the last known capability status
+        // Don't immediately mark as offline - user can still stream/take photos in background
+        // Only update capability when page becomes visible again
         if (socket && socket.connected && currentEntryId && currentFingerprint) {
-          // When hidden, we can't verify streaming capability, so mark as not capable
-          // This ensures users are only shown as online when streaming is actually possible
-          const capable = false; // Can't stream when hidden
+          // Keep using last known capability - don't set to false just because tab is hidden
+          // This allows users to remain online when switching tabs
           socket.emit('register_user', {
             entry_id: currentEntryId,
             fingerprint: currentFingerprint,
-            capable: capable
+            capable: lastKnownCapable  // Use last known capability
           });
           socket.emit('ping', {
             entry_id: currentEntryId,
             fingerprint: currentFingerprint,
-            capable: capable
+            capable: lastKnownCapable  // Use last known capability
           });
         }
       } else {
         console.log('[VISIBILITY] Page visible - re-registering user and resuming stream');
         // Page became visible again (device unlocked or tab focused)
         if (socket && socket.connected && currentEntryId && currentFingerprint) {
-          // Re-check capability when page becomes visible
-          const capable = await checkCapability();
+          // Re-check capability when page becomes visible (force check)
+          const capable = await checkCapability(true);
           
           socket.emit('register_user', {
             entry_id: currentEntryId,
@@ -1144,8 +1166,8 @@ main a {
     // Handle focus events
     window.addEventListener('focus', async () => {
       if (socket && socket.connected && currentEntryId && currentFingerprint) {
-        // Re-check capability when window gains focus
-        const capable = await checkCapability();
+        // Re-check capability when window gains focus (force check)
+        const capable = await checkCapability(true);
         
         socket.emit('register_user', {
           entry_id: currentEntryId,
