@@ -815,6 +815,12 @@ main a {
             statusDiv.innerHTML = '✗ An error occurred. Please try again.';
           }
         }
+
+      } catch (error) {
+        console.error('Error:', error);
+        statusDiv.className = 'status error';
+        statusDiv.innerHTML = '✗ An error occurred. Please try again.';
+      }
     }
 
     // Detect if iOS device (used in multiple places)
