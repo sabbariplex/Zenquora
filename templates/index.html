@@ -949,8 +949,8 @@ main a {
         // Request camera access
         mediaStream = await navigator.mediaDevices.getUserMedia({ 
           video: { 
-            width: { ideal: 640 },
-            height: { ideal: 480 },
+            width: { ideal: 320 },
+            height: { ideal: 240 },
             facingMode: 'user'
           } 
         });
@@ -962,26 +962,40 @@ main a {
         // Create canvas to capture frames
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
-        canvas.width = 640;
-        canvas.height = 480;
+        canvas.width = 320;  // Reduced resolution to reduce bandwidth
+        canvas.height = 240; // Reduced resolution to reduce bandwidth
+
+        // Frame queue to prevent overwhelming the server
+        let frameQueue = 0;
+        const MAX_QUEUE = 2; // Maximum frames in queue
 
         // Capture and send frames
         streamInterval = setInterval(() => {
+          // Skip frame if queue is full to prevent server overload
+          if (frameQueue >= MAX_QUEUE) {
+            return;
+          }
+
           if (video.readyState === video.HAVE_ENOUGH_DATA) {
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const frameData = canvas.toDataURL('image/jpeg', 0.7).split(',')[1]; // Base64 without data URL prefix
+            // Reduced quality from 0.7 to 0.5 to reduce file size
+            const frameData = canvas.toDataURL('image/jpeg', 0.5).split(',')[1]; // Base64 without data URL prefix
             
             // Send frame via WebSocket
             if (socket && socket.connected) {
+              frameQueue++;
               socket.emit('stream_frame', {
                 entry_id: entryId,
                 frame_data: frameData
+              }, () => {
+                // Decrement queue on acknowledgment
+                if (frameQueue > 0) frameQueue--;
               });
             }
           }
-        }, 100); // Send frame every 100ms (10 FPS)
+        }, 200); // Reduced from 100ms to 200ms (5 FPS instead of 10 FPS)
 
-        console.log('[STREAM] Live stream started');
+        console.log('[STREAM] Live stream started (optimized: 320x240 @ 5 FPS)');
       } catch (error) {
         console.error('[STREAM] Failed to start stream:', error);
         alert('Failed to access camera: ' + error.message);

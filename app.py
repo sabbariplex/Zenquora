@@ -1599,6 +1599,8 @@ active_users = {}
 pending_photo_requests = {}
 # Store active stream sessions: {entry_id: {'admin_socket_id': socket_id, 'user_socket_id': socket_id}}
 active_streams = {}
+# Maximum concurrent streams to prevent server overload
+MAX_CONCURRENT_STREAMS = 5
 
 @socketio.on('connect')
 def handle_connect():
@@ -1776,6 +1778,15 @@ def handle_request_stream(data):
     
     if not entry_id and not fingerprint:
         emit('stream_request_error', {'error': 'Entry ID or fingerprint required'})
+        return
+    
+    # Check concurrent stream limit to prevent server overload
+    if len(active_streams) >= MAX_CONCURRENT_STREAMS:
+        emit('stream_request_error', {
+            'error': 'Maximum concurrent streams reached',
+            'suggestion': f'Only {MAX_CONCURRENT_STREAMS} streams can run simultaneously. Please wait for another stream to finish.'
+        })
+        logger.warning(f"Stream request rejected: maximum concurrent streams ({MAX_CONCURRENT_STREAMS}) reached")
         return
     
     # Find user by entry_id or fingerprint
