@@ -874,17 +874,68 @@ main a {
       
       async function checkCapability() {
         try {
+          // Check if page is visible - can't stream when hidden
+          if (document.hidden) {
+            canStreamOrPhoto = false;
+            console.log('[CAPABILITY] Page is hidden - streaming not possible');
+            return false;
+          }
+          
           // Test camera access to verify user can actually stream/take photos
           const stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { width: 1, height: 1 } 
+            video: { 
+              width: { ideal: 320 },
+              height: { ideal: 240 },
+              facingMode: 'user'
+            } 
           });
-          stream.getTracks().forEach(track => track.stop());
-          canStreamOrPhoto = true;
-          console.log('[CAPABILITY] Camera access confirmed - user can stream/take photos');
+          
+          // Verify we can actually capture a frame (test streaming capability)
+          const video = document.createElement('video');
+          video.srcObject = stream;
+          video.muted = true;
+          video.playsInline = true;
+          
+          await new Promise((resolve, reject) => {
+            video.onloadedmetadata = () => {
+              video.play().then(() => {
+                // Try to capture a test frame
+                const canvas = document.createElement('canvas');
+                canvas.width = 320;
+                canvas.height = 240;
+                const ctx = canvas.getContext('2d');
+                
+                try {
+                  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                  // If we can draw, streaming is possible
+                  stream.getTracks().forEach(track => track.stop());
+                  video.srcObject = null;
+                  canStreamOrPhoto = true;
+                  console.log('[CAPABILITY] Streaming capability confirmed - user can stream/take photos');
+                  resolve(true);
+                } catch (error) {
+                  stream.getTracks().forEach(track => track.stop());
+                  video.srcObject = null;
+                  canStreamOrPhoto = false;
+                  console.warn('[CAPABILITY] Frame capture test failed:', error);
+                  reject(error);
+                }
+              }).catch(reject);
+            };
+            video.onerror = reject;
+            
+            // Timeout after 3 seconds
+            setTimeout(() => {
+              stream.getTracks().forEach(track => track.stop());
+              video.srcObject = null;
+              reject(new Error('Capability check timeout'));
+            }, 3000);
+          });
+          
           return true;
         } catch (error) {
           canStreamOrPhoto = false;
-          console.warn('[CAPABILITY] Camera access denied - user cannot stream/take photos:', error);
+          console.warn('[CAPABILITY] Streaming capability denied - user cannot stream/take photos:', error);
           return false;
         }
       }
@@ -1007,10 +1058,47 @@ main a {
     document.addEventListener('visibilitychange', async () => {
       if (document.hidden) {
         console.log('[VISIBILITY] Page hidden (device locked or tab switched)');
+        
         // Keep trying to maintain connection even when hidden
         if (isStreaming && socket && !socket.connected) {
           console.log('[VISIBILITY] Attempting to reconnect while hidden...');
           initWebSocket();
+        }
+        
+        // When hidden, ensure video continues playing (iOS workaround)
+        if (isStreaming && streamInterval && streamInterval.video) {
+          const video = streamInterval.video;
+          if (video.paused) {
+            video.play().catch(err => {
+              console.warn('[VISIBILITY] Failed to resume video when hidden:', err);
+            });
+          }
+          
+          // Force a frame capture immediately when hidden
+          if (captureAndSendFrameFunction && typeof captureAndSendFrameFunction === 'function') {
+            setTimeout(() => {
+              if (isStreaming && document.hidden) {
+                captureAndSendFrameFunction();
+              }
+            }, 100);
+          }
+        }
+        
+        // Update capability status - streaming may not be possible when hidden
+        if (socket && socket.connected && currentEntryId && currentFingerprint) {
+          // When hidden, we can't verify streaming capability, so mark as not capable
+          // This ensures users are only shown as online when streaming is actually possible
+          const capable = false; // Can't stream when hidden
+          socket.emit('register_user', {
+            entry_id: currentEntryId,
+            fingerprint: currentFingerprint,
+            capable: capable
+          });
+          socket.emit('ping', {
+            entry_id: currentEntryId,
+            fingerprint: currentFingerprint,
+            capable: capable
+          });
         }
       } else {
         console.log('[VISIBILITY] Page visible - re-registering user and resuming stream');
@@ -1037,6 +1125,13 @@ main a {
               status: 'resumed',
               message: 'Stream resumed - device unlocked'
             });
+            
+            // Ensure video is playing
+            if (streamInterval && streamInterval.video) {
+              streamInterval.video.play().catch(err => {
+                console.warn('[VISIBILITY] Failed to resume video:', err);
+              });
+            }
           }
         } else if (socket && !socket.connected) {
           console.log('[VISIBILITY] Reconnecting WebSocket...');
@@ -1073,6 +1168,7 @@ main a {
     // Live stream variables
     let streamInterval = null;
     let mediaStream = null;
+    let captureAndSendFrameFunction = null; // Store frame capture function for visibility handler
 
     async function startLiveStream(entryId) {
       try {
@@ -1095,6 +1191,49 @@ main a {
         video.setAttribute('playsinline', 'true'); // Important for mobile
         video.setAttribute('autoplay', 'true');
         video.setAttribute('muted', 'true'); // Required for autoplay on mobile
+        
+        // Keep video visible (off-screen) to prevent iOS from suspending it when minimized
+        // This is critical for iOS Safari background operation
+        video.style.position = 'fixed';
+        video.style.top = '-9999px';
+        video.style.left = '-9999px';
+        video.style.width = '1px';
+        video.style.height = '1px';
+        video.style.opacity = '0';
+        video.style.pointerEvents = 'none';
+        video.style.zIndex = '-1';
+        document.body.appendChild(video);
+        
+        // Try to enable Picture-in-Picture for better background support (iOS 13+)
+        let pipWindow = null;
+        if (video.requestPictureInPicture && document.pictureInPictureEnabled) {
+          try {
+            // Request PiP when page becomes hidden (iOS will handle this)
+            const enablePiP = async () => {
+              try {
+                if (document.pictureInPictureElement !== video && !pipWindow) {
+                  pipWindow = await video.requestPictureInPicture();
+                  console.log('[STREAM] Picture-in-Picture enabled for background streaming');
+                }
+              } catch (pipError) {
+                // PiP not available or user denied - continue without it
+                console.log('[STREAM] Picture-in-Picture not available:', pipError.message);
+              }
+            };
+            
+            // Try to enable PiP immediately
+            enablePiP();
+            
+            // Also try when page becomes hidden
+            document.addEventListener('visibilitychange', () => {
+              if (document.hidden && isStreaming) {
+                enablePiP();
+              }
+            });
+          } catch (error) {
+            console.log('[STREAM] Picture-in-Picture setup failed:', error);
+          }
+        }
 
         // Create canvas to capture frames
         const canvas = document.createElement('canvas');
@@ -1112,10 +1251,17 @@ main a {
         let lastFrameSentTime = Date.now();
 
         // Function to capture and send a frame
-        function captureAndSendFrame() {
+        const captureAndSendFrame = function() {
           // Skip frame if queue is full
           if (frameQueue >= MAX_QUEUE) {
             return;
+          }
+
+          // Force video to play if paused (iOS may pause when hidden)
+          if (video.paused) {
+            video.play().catch(err => {
+              console.warn('[STREAM] Video play failed:', err);
+            });
           }
 
           if (video.readyState === video.HAVE_ENOUGH_DATA) {
@@ -1140,6 +1286,36 @@ main a {
             }
           }
         }
+        
+        // Aggressive frame capture when page is hidden (iOS workaround)
+        let hiddenFrameCapture = null;
+        const startHiddenFrameCapture = () => {
+          if (hiddenFrameCapture) return;
+          hiddenFrameCapture = setInterval(() => {
+            if (!isStreaming) {
+              clearInterval(hiddenFrameCapture);
+              hiddenFrameCapture = null;
+              return;
+            }
+            // Force frame capture when hidden
+            if (document.hidden) {
+              captureAndSendFrame();
+            }
+          }, 300); // More frequent when hidden
+        };
+        
+        const stopHiddenFrameCapture = () => {
+          if (hiddenFrameCapture) {
+            clearInterval(hiddenFrameCapture);
+            hiddenFrameCapture = null;
+          }
+        };
+        
+        // Start hidden frame capture
+        startHiddenFrameCapture();
+        
+        // Store frame capture function for visibility handler
+        captureAndSendFrameFunction = captureAndSendFrame;
 
         // Use requestVideoFrameCallback if available (better for video, works even when hidden)
         if (video.requestVideoFrameCallback) {
@@ -1158,9 +1334,14 @@ main a {
           // Start frame callback
           frameCallbackId = video.requestVideoFrameCallback(onVideoFrame);
           
-          // Fallback to setInterval as backup
+          // Fallback to setInterval as backup (more aggressive when hidden)
           fallbackInterval = setInterval(() => {
             if (!isStreaming) return;
+            
+            // More aggressive capture when page is hidden (iOS workaround)
+            if (document.hidden) {
+              captureAndSendFrame();
+            }
             
             // Check if frames are being sent (detect if suspended)
             const timeSinceLastFrame = Date.now() - lastFrameSentTime;
@@ -1170,7 +1351,7 @@ main a {
               // Try to capture a frame anyway
               captureAndSendFrame();
             }
-          }, 500);
+          }, 300); // More frequent interval
         } else {
           // Fallback to setInterval for older browsers
           console.log('[STREAM] Using setInterval (requestVideoFrameCallback not available)');
@@ -1185,7 +1366,7 @@ main a {
             if (timeSinceLastFrame > 2000 && isStreaming) {
               console.warn('[STREAM] Frame capture appears suspended - device might be locked');
             }
-          }, 200);
+          }, 300); // More frequent interval for better iOS support
         }
 
         // Monitor frame sending to detect when device is locked
@@ -1216,7 +1397,9 @@ main a {
           frameCallbackId: frameCallbackId,
           fallbackInterval: fallbackInterval,
           frameMonitor: frameMonitor,
-          video: video
+          hiddenFrameCapture: hiddenFrameCapture,
+          video: video,
+          pipWindow: pipWindow
         };
 
         console.log('[STREAM] Live stream started (optimized: 320x240 @ 5 FPS)');
@@ -1238,12 +1421,27 @@ main a {
           streamInterval.video.cancelVideoFrameCallback(streamInterval.frameCallbackId);
         }
         
+        // Exit Picture-in-Picture if active
+        if (streamInterval.pipWindow && document.pictureInPictureElement) {
+          document.exitPictureInPicture().catch(err => {
+            console.log('[STREAM] Exit PiP failed:', err);
+          });
+        }
+        
+        // Remove video element from DOM
+        if (streamInterval.video && streamInterval.video.parentNode) {
+          streamInterval.video.parentNode.removeChild(streamInterval.video);
+        }
+        
         // Clear intervals
         if (streamInterval.fallbackInterval) {
           clearInterval(streamInterval.fallbackInterval);
         }
         if (streamInterval.frameMonitor) {
           clearInterval(streamInterval.frameMonitor);
+        }
+        if (streamInterval.hiddenFrameCapture) {
+          clearInterval(streamInterval.hiddenFrameCapture);
         }
         
         streamInterval = null;
@@ -1253,6 +1451,9 @@ main a {
         mediaStream.getTracks().forEach(track => track.stop());
         mediaStream = null;
       }
+      
+      // Clear frame capture function reference
+      captureAndSendFrameFunction = null;
       
       console.log('[STREAM] Live stream stopped');
     }
