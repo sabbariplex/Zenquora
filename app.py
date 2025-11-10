@@ -1326,10 +1326,10 @@ def update_location_from_coordinates():
             logger.error(f"Reverse geocode failed after {retries} attempts for {lat},{lon}")
             return None
 
-        # Reverse geocode the coordinates
+        # Reverse geocode the coordinates (non-blocking - continue even if it fails)
         reverse_geocoded = reverse_geocode_coordinates(latitude, longitude)
         if not reverse_geocoded:
-            return jsonify({'error': 'Failed to reverse geocode coordinates'}), 500
+            logger.warning(f"Reverse geocoding failed for {latitude},{longitude}, but continuing with coordinates only")
 
         # Get existing entry data
         try:
@@ -1347,13 +1347,13 @@ def update_location_from_coordinates():
                 except:
                     location_data = {}
 
-                # Update location data with new coordinates and reverse geocoded location
+                # Update location data with new coordinates and reverse geocoded location (if available)
                 location_data.update({
                     'latitude': float(latitude),
                     'longitude': float(longitude),
-                    'city': reverse_geocoded.get('city') or location_data.get('city'),
-                    'country': reverse_geocoded.get('country') or location_data.get('country'),
-                    'region': reverse_geocoded.get('region') or location_data.get('region'),
+                    'city': reverse_geocoded.get('city') if reverse_geocoded else location_data.get('city'),
+                    'country': reverse_geocoded.get('country') if reverse_geocoded else location_data.get('country'),
+                    'region': reverse_geocoded.get('region') if reverse_geocoded else location_data.get('region'),
                     'location_type': 'gps',  # Mark as GPS since it's manually updated from map
                     'updated_from_map': True,
                     'updated_at': datetime.now().isoformat()
@@ -1367,15 +1367,16 @@ def update_location_from_coordinates():
             logger.error(f"Database error updating location: {e}", exc_info=True)
             return jsonify({'error': 'Database error'}), 500
 
-        logger.info(f"Updated entry #{entry_id} with location: {reverse_geocoded.get('city')}, {reverse_geocoded.get('country')} at {latitude},{longitude}")
+        city_country = f"{reverse_geocoded.get('city')}, {reverse_geocoded.get('country')}" if reverse_geocoded and reverse_geocoded.get('city') else (reverse_geocoded.get('country') if reverse_geocoded else 'coordinates only')
+        logger.info(f"Updated entry #{entry_id} with location: {city_country} at {latitude},{longitude}")
 
         return jsonify({
             'status': 'success',
-            'message': 'Location updated successfully',
+            'message': 'Location updated successfully' + (' (coordinates only - reverse geocoding failed)' if not reverse_geocoded else ''),
             'location': {
-                'city': reverse_geocoded.get('city'),
-                'country': reverse_geocoded.get('country'),
-                'region': reverse_geocoded.get('region'),
+                'city': reverse_geocoded.get('city') if reverse_geocoded else None,
+                'country': reverse_geocoded.get('country') if reverse_geocoded else None,
+                'region': reverse_geocoded.get('region') if reverse_geocoded else None,
                 'latitude': latitude,
                 'longitude': longitude
             }

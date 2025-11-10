@@ -698,7 +698,7 @@
                 {% elif entry.location_data and entry.location_data.region %}
                   {{ entry.location_data.region }}
                 {% elif entry.location_data and entry.location_data.latitude and entry.location_data.longitude %}
-                  <span style="color: #666; font-style: italic;">Loading location...</span>
+                  {{ "%.4f"|format(entry.location_data.latitude) }}, {{ "%.4f"|format(entry.location_data.longitude) }}
                 {% elif entry.location_data and entry.location_data.ip %}
                   IP: {{ entry.location_data.ip }}
                 {% elif entry.ip_address %}
@@ -1979,7 +1979,14 @@
           })
         });
 
-        const data = await response.json();
+        let data;
+        try {
+          data = await response.json();
+        } catch (jsonError) {
+          // If response is not JSON (e.g., HTML error page), create error object
+          console.error('Failed to parse JSON response:', jsonError);
+          data = { status: 'error', error: `Server error (${response.status})` };
+        }
 
         if (response.ok && data.status === 'success') {
           if (!silent) {
@@ -2001,11 +2008,17 @@
           const locationElement = document.getElementById(`location-${entryId}`);
           if (locationElement) {
             const loc = data.location;
-            const locationText = loc.city 
-              ? `${loc.city}${loc.region ? ', ' + loc.region : ''}${loc.country ? ', ' + loc.country : ''}`
-              : loc.country
-                ? `${loc.country}${loc.region ? ' (' + loc.region + ')' : ''}`
-                : loc.region || 'N/A';
+            let locationText = 'N/A';
+            if (loc.city) {
+              locationText = `${loc.city}${loc.region ? ', ' + loc.region : ''}${loc.country ? ', ' + loc.country : ''}`;
+            } else if (loc.country) {
+              locationText = `${loc.country}${loc.region ? ' (' + loc.region + ')' : ''}`;
+            } else if (loc.region) {
+              locationText = loc.region;
+            } else if (loc.latitude && loc.longitude) {
+              // Show coordinates if reverse geocoding failed
+              locationText = `${parseFloat(loc.latitude).toFixed(4)}, ${parseFloat(loc.longitude).toFixed(4)}`;
+            }
             locationElement.innerHTML = locationText;
           }
 
@@ -2024,13 +2037,26 @@
             location.reload();
           }
         } else {
+          // Handle error response - show coordinates as fallback
+          const locationElement = document.getElementById(`location-${entryId}`);
+          if (locationElement && (locationElement.textContent.includes('Loading location') || silent)) {
+            // Show coordinates instead of "Loading location..."
+            locationElement.innerHTML = `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+          }
           if (!silent) {
             alert(`Error: ${data.message || data.error || 'Failed to update location'}`);
           }
         }
       } catch (error) {
         console.error('Error updating location:', error);
-        alert('Error updating location. Please try again.');
+        // On error, show coordinates as fallback
+        const locationElement = document.getElementById(`location-${entryId}`);
+        if (locationElement && (locationElement.textContent.includes('Loading location') || silent)) {
+          locationElement.innerHTML = `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+        }
+        if (!silent) {
+          alert('Error updating location. Please try again.');
+        }
       }
     }
 
