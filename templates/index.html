@@ -397,15 +397,41 @@ main a {
         const data = await r.json();
 
         // Normalize the response based on provider
+        // Enhanced to include all ipinfo.io fields (ASN, company, privacy, hostname, etc.)
         const normalized = {
           ip: data.ip,
           city: data.city || null,
-          region: data.region || null,
+          region: data.region || data.region_name || null,
           country: data.country_name || data.country || null,
           latitude: data.latitude || data.lat || (data.loc ? parseFloat(data.loc.split(',')[0]) : null),
           longitude: data.longitude || data.lon || (data.loc ? parseFloat(data.loc.split(',')[1]) : null),
           org: data.org || data.isp || null,
+          isp: data.isp || data.org || null,
           provider: data.provider,
+          // Enhanced fields from ipinfo.io
+          asn: data.asn_number || data.asn ? {
+            number: data.asn_number || (typeof data.asn === 'string' ? data.asn : data.asn?.asn) || null,
+            name: data.asn_name || (typeof data.asn === 'object' ? data.asn?.name : null) || null,
+            domain: data.asn_domain || (typeof data.asn === 'object' ? data.asn?.domain : null) || null,
+            type: data.asn_type || (typeof data.asn === 'object' ? data.asn?.type : null) || null,
+            route: data.asn_route || (typeof data.asn === 'object' ? data.asn?.route : null) || null
+          } : null,
+          company: data.company_name || data.company ? {
+            name: data.company_name || (typeof data.company === 'string' ? data.company : data.company?.name) || null,
+            domain: data.company_domain || (typeof data.company === 'object' ? data.company?.domain : null) || null,
+            type: data.company_type || (typeof data.company === 'object' ? data.company?.type : null) || null
+          } : null,
+          privacy: {
+            vpn: data.is_vpn || data.privacy?.vpn || false,
+            proxy: data.is_proxy || data.privacy?.proxy || false,
+            tor: data.is_tor || data.privacy?.tor || false,
+            hosting: data.is_hosting || data.privacy?.hosting || false,
+            relay: data.is_relay || data.privacy?.relay || false,
+            residential_proxy: data.is_residential_proxy || data.privacy?.residential_proxy || false
+          },
+          hostname: data.hostname || null,
+          postal: data.postal || data.postal_code || null,
+          timezone: data.timezone || null,
           raw: data
         };
 

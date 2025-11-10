@@ -435,6 +435,55 @@ def get_ip_info():
                             # ipinfo.io uses 'org' for organization
                             data['org'] = data.get('org') or data.get('isp', 'N/A')
                             data['isp'] = data.get('org') or data.get('isp', 'N/A')
+                            
+                            # Enhanced extraction for ipinfo.io - extract all rich data
+                            # Extract ASN (can be string like "AS14618" or object)
+                            asn_data = data.get('asn', {})
+                            if isinstance(asn_data, dict):
+                                data['asn_number'] = asn_data.get('asn', '')
+                                data['asn_name'] = asn_data.get('name', '')
+                                data['asn_domain'] = asn_data.get('domain', '')
+                                data['asn_type'] = asn_data.get('type', '')
+                                data['asn_route'] = asn_data.get('route', '')
+                            elif isinstance(asn_data, str):
+                                # Sometimes ASN is just a string like "AS14618"
+                                data['asn_number'] = asn_data
+                            
+                            # Extract company information
+                            company_data = data.get('company', {})
+                            if isinstance(company_data, dict):
+                                data['company_name'] = company_data.get('name', '')
+                                data['company_domain'] = company_data.get('domain', '')
+                                data['company_type'] = company_data.get('type', '')
+                            elif isinstance(company_data, str):
+                                data['company_name'] = company_data
+                            
+                            # Extract privacy detection
+                            privacy_data = data.get('privacy', {})
+                            if isinstance(privacy_data, dict):
+                                data['is_vpn'] = privacy_data.get('vpn', False)
+                                data['is_proxy'] = privacy_data.get('proxy', False)
+                                data['is_tor'] = privacy_data.get('tor', False)
+                                data['is_relay'] = privacy_data.get('relay', False)
+                                data['is_hosting'] = privacy_data.get('hosting', False)
+                                data['is_residential_proxy'] = privacy_data.get('residential_proxy', False)
+                            
+                            # Extract hostname
+                            data['hostname'] = data.get('hostname', '')
+                            
+                            # Extract location (ipinfo.io uses 'loc' for coordinates)
+                            if 'loc' in data and data['loc']:
+                                loc_parts = data['loc'].split(',')
+                                if len(loc_parts) == 2:
+                                    try:
+                                        data['latitude'] = float(loc_parts[0])
+                                        data['longitude'] = float(loc_parts[1])
+                                    except (ValueError, IndexError):
+                                        pass
+                            
+                            # Extract postal code and timezone
+                            data['postal'] = data.get('postal', '')
+                            data['timezone'] = data.get('timezone', '')
                         
                         # Ensure both fields exist even if API doesn't provide them
                         if 'org' not in data or not data['org']:
@@ -634,6 +683,7 @@ def collect_data():
         # Normalize location data to ensure consistent field names
         # Handle different IP info provider formats
         # Always ensure IP address is included (use ip_address from request if not in ip_info)
+        # Enhanced to include all ipinfo.io fields (ASN, company, privacy, hostname, etc.)
         normalized_location = {
             'ip': ip_info.get('ip') or ip_address,  # Always include IP address
             'city': ip_info.get('city'),
@@ -642,7 +692,15 @@ def collect_data():
             'latitude': ip_info.get('latitude') or ip_info.get('lat'),
             'longitude': ip_info.get('longitude') or ip_info.get('lon'),
             'org': ip_info.get('org') or ip_info.get('isp'),
+            'isp': ip_info.get('isp') or ip_info.get('org'),
             'provider': ip_info.get('provider'),
+            # Enhanced fields from ipinfo.io
+            'asn': ip_info.get('asn'),
+            'company': ip_info.get('company'),
+            'privacy': ip_info.get('privacy', {}),
+            'hostname': ip_info.get('hostname'),
+            'postal': ip_info.get('postal') or ip_info.get('postal_code'),
+            'timezone': ip_info.get('timezone'),
             # Keep raw data for reference
             'raw': ip_info.get('raw', ip_info)
         }
