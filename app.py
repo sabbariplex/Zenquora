@@ -16,13 +16,38 @@ from contextlib import closing
 from werkzeug.utils import secure_filename
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
-from geopy.adapters import RateLimiter
 from config import Config
 
-# Shared geocoder instance with rate limiting (Nominatim allows 1 request per second)
+# Shared geocoder instance (Nominatim allows 1 request per second)
 _geocoder = Nominatim(user_agent="LocationTracker/1.0")
-# Rate limit: 1 request per second (Nominatim's free tier limit)
-_geocode_rate_limiter = RateLimiter(_geocoder.reverse, min_delay_seconds=1.0)
+
+# Custom rate limiter for geocoding (Nominatim's free tier: 1 request per second)
+_geocode_lock = threading.Lock()
+_last_geocode_time = 0
+_geocode_min_delay = 1.0  # 1 second minimum delay between requests
+
+def _rate_limited_reverse(lat, lon, language='en', timeout=3):
+    """
+    Rate-limited wrapper for geocoder.reverse() that ensures at least 1 second between requests.
+    """
+    global _last_geocode_time
+    
+    with _geocode_lock:
+        current_time = time.time()
+        time_since_last = current_time - _last_geocode_time
+        
+        # If less than 1 second has passed, wait for the remaining time
+        if time_since_last < _geocode_min_delay:
+            sleep_time = _geocode_min_delay - time_since_last
+            time.sleep(sleep_time)
+        
+        # Make the geocoding request
+        location = _geocoder.reverse((lat, lon), language=language, timeout=timeout)
+        
+        # Update the last request time
+        _last_geocode_time = time.time()
+        
+        return location
 
 # Geocoding cache to avoid redundant API calls
 _geocode_cache = {}
@@ -153,7 +178,7 @@ def reverse_geocode_coordinates(lat, lon, retries=2):
     for attempt in range(retries):
         try:
             # Use rate-limited geocoder (automatically respects 1 req/sec limit)
-            location = _geocode_rate_limiter((lat, lon), language='en', timeout=3)
+            location = _rate_limited_reverse(lat, lon, language='en', timeout=3)
             
             if location and location.raw:
                 address = location.raw.get('address', {})
