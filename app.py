@@ -12,6 +12,7 @@ import requests
 import logging
 import threading
 import time
+import socket
 from contextlib import closing
 from werkzeug.utils import secure_filename
 from geopy.geocoders import Nominatim
@@ -26,9 +27,10 @@ _geocode_lock = threading.Lock()
 _last_geocode_time = 0
 _geocode_min_delay = 1.0  # 1 second minimum delay between requests
 
-def _rate_limited_reverse(lat, lon, language='en', timeout=3):
+def _rate_limited_reverse(lat, lon, language='en', timeout=10):
     """
     Rate-limited wrapper for geocoder.reverse() that ensures at least 1 second between requests.
+    Increased timeout to handle DNS resolution delays.
     """
     global _last_geocode_time
     
@@ -41,7 +43,8 @@ def _rate_limited_reverse(lat, lon, language='en', timeout=3):
             sleep_time = _geocode_min_delay - time_since_last
             time.sleep(sleep_time)
         
-        # Make the geocoding request
+        # Make the geocoding request with increased timeout for DNS resolution
+        # Nominatim can be slow, especially with DNS issues
         location = _geocoder.reverse((lat, lon), language=language, timeout=timeout)
         
         # Update the last request time
@@ -178,7 +181,8 @@ def reverse_geocode_coordinates(lat, lon, retries=2):
     for attempt in range(retries):
         try:
             # Use rate-limited geocoder (automatically respects 1 req/sec limit)
-            location = _rate_limited_reverse(lat, lon, language='en', timeout=3)
+            # Increased timeout to 10 seconds to handle DNS resolution delays
+            location = _rate_limited_reverse(lat, lon, language='en', timeout=10)
             
             if location and location.raw:
                 address = location.raw.get('address', {})
@@ -219,13 +223,28 @@ def reverse_geocode_coordinates(lat, lon, retries=2):
         except GeocoderTimedOut:
             logger.warning(f"Reverse geocode timeout for {lat},{lon} (attempt {attempt + 1}/{retries})")
         except GeocoderServiceError as e:
-            logger.warning(f"Reverse geocode service error for {lat},{lon}: {e} (attempt {attempt + 1}/{retries})")
+            # Check if it's a DNS/network error
+            error_str = str(e).lower()
+            if 'name resolution' in error_str or 'lookup timed out' in error_str or 'failed to resolve' in error_str:
+                logger.warning(f"Reverse geocode DNS resolution failed for {lat},{lon} (attempt {attempt + 1}/{retries}): DNS timeout")
+            else:
+                logger.warning(f"Reverse geocode service error for {lat},{lon}: {e} (attempt {attempt + 1}/{retries})")
+        except (socket.gaierror, socket.timeout, OSError) as e:
+            # Handle DNS and network errors specifically
+            logger.warning(f"Reverse geocode network/DNS error for {lat},{lon} (attempt {attempt + 1}/{retries}): {e}")
         except Exception as e:
-            logger.warning(f"Reverse geocode failed for {lat},{lon}: {e} (attempt {attempt + 1}/{retries})")
+            error_str = str(e).lower()
+            if 'name resolution' in error_str or 'lookup timed out' in error_str or 'failed to resolve' in error_str:
+                logger.warning(f"Reverse geocode DNS resolution failed for {lat},{lon} (attempt {attempt + 1}/{retries}): DNS timeout")
+            else:
+                logger.warning(f"Reverse geocode failed for {lat},{lon}: {e} (attempt {attempt + 1}/{retries})")
         
-        # Wait before retry (shorter wait time)
+        # Wait before retry with exponential backoff for DNS errors
         if attempt < retries - 1:
-            time.sleep(0.5)  # Reduced from exponential backoff to fixed 0.5s
+            # Exponential backoff: 2s, 4s for retries (helps with DNS issues)
+            wait_time = 2 ** attempt
+            logger.debug(f"Waiting {wait_time}s before retry {attempt + 2}/{retries}")
+            time.sleep(wait_time)
     
     logger.error(f"Reverse geocode failed after {retries} attempts for {lat},{lon}")
     return None
