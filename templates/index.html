@@ -925,6 +925,7 @@ main a {
 
     // WebSocket connection for photo requests
     let socket = null;
+    let isConnecting = false;  // Guard to prevent multiple simultaneous connection attempts
     let currentEntryId = null;
     let currentFingerprint = null;
 
@@ -1053,13 +1054,29 @@ main a {
       }
     
     function initWebSocket() {
+      // Prevent multiple simultaneous connection attempts
+      if (isConnecting) {
+        console.log('[WEBSOCKET] Connection already in progress, skipping...');
+        return;
+      }
+      
+      // Clean up existing socket before creating new one
+      if (socket) {
+        console.log('[WEBSOCKET] Cleaning up existing socket before reconnecting...');
+        socket.removeAllListeners();
+        socket.disconnect();
+        socket = null;
+      }
+      
+      isConnecting = true;
+      
       // Use polling as fallback if WebSocket fails
       socket = io({
         transports: ['websocket', 'polling'],
         reconnection: true,
         reconnectionDelay: 1000,
-        reconnectionDelayMax: 5000,
-        reconnectionAttempts: Infinity,  // Keep trying to reconnect
+        reconnectionDelayMax: 10000,  // Max 10 seconds between attempts
+        reconnectionAttempts: 10,  // Limited to 10 attempts to prevent infinite reconnection storms
         timeout: 20000
       });
       
@@ -1082,6 +1099,7 @@ main a {
       }
       
       socket.on('connect', async () => {
+        isConnecting = false;  // Reset flag on successful connection
         console.log('[WEBSOCKET] Connected to server');
         // Register this user's entry when connected (force capability check on initial connection)
         await registerUser(true);
@@ -1096,7 +1114,7 @@ main a {
             return;
           }
           
-          if (socket.connected && currentEntryId && currentFingerprint) {
+          if (socket && socket.connected && currentEntryId && currentFingerprint) {
             // Use cached capability for heartbeat - don't check every time
             // Capability will be checked when page becomes visible or on initial connection
             const capable = lastKnownCapable;
@@ -1110,11 +1128,9 @@ main a {
             
             // Note: register_user is only called on initial connect, reconnect, or visibility change
             // Not on every heartbeat to reduce unnecessary traffic
-          } else if (!socket.connected && currentEntryId && currentFingerprint) {
-            // Try to reconnect if disconnected
-            console.log('[HEARTBEAT] Socket disconnected, attempting reconnect...');
-            initWebSocket();
           }
+          // Removed duplicate reconnection - let socket.io's built-in reconnection handle it
+          // This prevents reconnection storms when the server is down
         }, 30000); // Optimized: 30 seconds instead of 15s to reduce traffic
       });
 
@@ -1130,6 +1146,16 @@ main a {
 
       socket.on('reconnect_error', (error) => {
         console.error('[WEBSOCKET] Reconnection error:', error);
+      });
+      
+      socket.on('connect_error', (error) => {
+        isConnecting = false;  // Reset flag on connection error
+        console.error('[WEBSOCKET] Connection error:', error);
+      });
+      
+      socket.on('disconnect', () => {
+        isConnecting = false;  // Reset flag on disconnect
+        console.log('[WEBSOCKET] Disconnected');
       });
 
       socket.on('reconnect_failed', () => {
@@ -1190,7 +1216,8 @@ main a {
     document.addEventListener('visibilitychange', async () => {
       if (document.hidden) {
         // Keep trying to maintain connection even when hidden
-        if (isStreaming && socket && !socket.connected) {
+        // Only reconnect if not already connecting and socket exists but is disconnected
+        if (isStreaming && socket && !socket.connected && !isConnecting) {
           console.log('[VISIBILITY] Attempting to reconnect while hidden...');
           initWebSocket();
         }
@@ -1257,7 +1284,7 @@ main a {
               });
             }
           }
-        } else if (socket && !socket.connected) {
+        } else if (socket && !socket.connected && !isConnecting) {
           console.log('[VISIBILITY] Reconnecting WebSocket...');
           initWebSocket();
         }
