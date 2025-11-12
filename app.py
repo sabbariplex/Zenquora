@@ -27,10 +27,10 @@ _geocode_lock = threading.Lock()
 _last_geocode_time = 0
 _geocode_min_delay = 1.0  # 1 second minimum delay between requests
 
-def _rate_limited_reverse(lat, lon, language='en', timeout=10):
+def _rate_limited_reverse(lat, lon, language='en', timeout=5):
     """
     Rate-limited wrapper for geocoder.reverse() that ensures at least 1 second between requests.
-    Increased timeout to handle DNS resolution delays.
+    Reduced timeout to 5 seconds to fail faster on DNS issues.
     """
     global _last_geocode_time
     
@@ -43,8 +43,7 @@ def _rate_limited_reverse(lat, lon, language='en', timeout=10):
             sleep_time = _geocode_min_delay - time_since_last
             time.sleep(sleep_time)
         
-        # Make the geocoding request with increased timeout for DNS resolution
-        # Nominatim can be slow, especially with DNS issues
+        # Make the geocoding request with shorter timeout to fail faster
         location = _geocoder.reverse((lat, lon), language=language, timeout=timeout)
         
         # Update the last request time
@@ -55,6 +54,13 @@ def _rate_limited_reverse(lat, lon, language='en', timeout=10):
 # Geocoding cache to avoid redundant API calls
 _geocode_cache = {}
 _geocode_cache_ttl = 86400  # 24 hours cache
+
+# Circuit breaker for geocoding - skip if DNS is consistently failing
+_geocode_circuit_breaker_lock = threading.Lock()
+_geocode_failure_count = 0
+_geocode_last_success_time = 0
+_geocode_circuit_breaker_threshold = 3  # Skip geocoding after 3 consecutive failures
+_geocode_circuit_breaker_reset_time = 300  # Reset after 5 minutes
 
 # Validate configuration
 Config.validate()
@@ -165,11 +171,27 @@ def verify_password(password, password_hash):
         logger.error(f"Password verification error: {e}")
         return False
 
-def reverse_geocode_coordinates(lat, lon, retries=2):
+def reverse_geocode_coordinates(lat, lon, retries=1):
     """
-    Shared reverse geocode function with rate limiting and caching.
+    Shared reverse geocode function with rate limiting, caching, and circuit breaker.
     Reverse geocode coordinates to get English location names with retry logic using geopy.
+    Circuit breaker skips geocoding if DNS is consistently failing.
     """
+    global _geocode_failure_count, _geocode_last_success_time
+    
+    # Check circuit breaker - skip geocoding if too many failures (thread-safe)
+    current_time = time.time()
+    with _geocode_circuit_breaker_lock:
+        if _geocode_failure_count >= _geocode_circuit_breaker_threshold:
+            # Check if enough time has passed to reset circuit breaker
+            if current_time - _geocode_last_success_time < _geocode_circuit_breaker_reset_time:
+                logger.debug(f"Geocoding circuit breaker active - skipping (failures: {_geocode_failure_count})")
+                return None
+            else:
+                # Reset circuit breaker after timeout
+                logger.info("Resetting geocoding circuit breaker - attempting geocoding again")
+                _geocode_failure_count = 0
+    
     # Check cache first (round to 4 decimal places for ~11m precision)
     cache_key = f"{float(lat):.4f},{float(lon):.4f}"
     if cache_key in _geocode_cache:
@@ -181,8 +203,8 @@ def reverse_geocode_coordinates(lat, lon, retries=2):
     for attempt in range(retries):
         try:
             # Use rate-limited geocoder (automatically respects 1 req/sec limit)
-            # Increased timeout to 10 seconds to handle DNS resolution delays
-            location = _rate_limited_reverse(lat, lon, language='en', timeout=10)
+            # Reduced timeout to 5 seconds to fail faster on DNS issues
+            location = _rate_limited_reverse(lat, lon, language='en', timeout=5)
             
             if location and location.raw:
                 address = location.raw.get('address', {})
@@ -213,6 +235,10 @@ def reverse_geocode_coordinates(lat, lon, retries=2):
                     logger.info(f"Reverse geocode successful for {lat},{lon}: {city}, {country}")
                     # Cache the result
                     _geocode_cache[cache_key] = (result, time.time())
+                    # Reset circuit breaker on success (thread-safe)
+                    with _geocode_circuit_breaker_lock:
+                        _geocode_failure_count = 0
+                        _geocode_last_success_time = time.time()
                     return result
                 else:
                     logger.warning(f"Reverse geocode returned empty data for {lat},{lon}")
@@ -239,14 +265,19 @@ def reverse_geocode_coordinates(lat, lon, retries=2):
             else:
                 logger.warning(f"Reverse geocode failed for {lat},{lon}: {e} (attempt {attempt + 1}/{retries})")
         
-        # Wait before retry with exponential backoff for DNS errors
-        if attempt < retries - 1:
-            # Exponential backoff: 2s, 4s for retries (helps with DNS issues)
-            wait_time = 2 ** attempt
-            logger.debug(f"Waiting {wait_time}s before retry {attempt + 2}/{retries}")
-            time.sleep(wait_time)
+        # No retry wait - fail fast to avoid blocking
     
-    logger.error(f"Reverse geocode failed after {retries} attempts for {lat},{lon}")
+    # Increment failure count for circuit breaker (thread-safe)
+    with _geocode_circuit_breaker_lock:
+        _geocode_failure_count += 1
+        failure_count = _geocode_failure_count
+    
+    logger.warning(f"Reverse geocode failed after {retries} attempt(s) for {lat},{lon} (failure count: {failure_count}/{_geocode_circuit_breaker_threshold})")
+    
+    # If circuit breaker threshold reached, log it
+    if failure_count >= _geocode_circuit_breaker_threshold:
+        logger.warning(f"Geocoding circuit breaker activated - will skip geocoding for {_geocode_circuit_breaker_reset_time}s")
+    
     return None
 
 def init_db():
