@@ -1183,7 +1183,8 @@ def collect_data():
                         }
                         
                         # Send as new_entry so dashboard can add/update it
-                        socketio.emit('new_entry', entry_data, broadcast=True, include_self=False, namespace='/')
+                        # Note: Removed include_self=False - not available in HTTP request context
+                        socketio.emit('new_entry', entry_data, broadcast=True, namespace='/')
                         logger.debug(f"Broadcasted entry update (as new_entry) for entry #{entry_id}")
                     except Exception as e:
                         logger.error(f"Error preparing updated entry data: {e}", exc_info=True)
@@ -1272,7 +1273,8 @@ def collect_data():
                             'is_online': is_online
                         }
                         
-                        socketio.emit('new_entry', entry_data, broadcast=True, include_self=False, namespace='/')
+                        # Note: Removed include_self=False - not available in HTTP request context
+                        socketio.emit('new_entry', entry_data, broadcast=True, namespace='/')
                         logger.debug(f"Broadcasted new entry #{entry_id} to dashboard")
                         logger.debug(f"Entry data keys: {list(entry_data.keys())}")
                         logger.debug(f"Entry ID: {entry_data.get('id')}, IP: {entry_data.get('ip_address')}")
@@ -2296,10 +2298,11 @@ def cleanup_offline_users():
                             del active_streams[entry_id]
                         
                         # Broadcast offline status
+                        # Note: Removed include_self=False - not available in background thread context
                         socketio.emit('user_status_update', {
                             'entry_id': entry_id,
                             'is_online': False
-                        }, broadcast=True, include_self=False, namespace='/')
+                        }, broadcast=True, namespace='/')
                 except Exception as e:
                     logger.warning(f"Error checking ping time for entry {entry_id}: {e}")
 
